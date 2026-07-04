@@ -1,0 +1,8 @@
+# Top-level workflow wiring
+task_source: mock
+max_rework_iterations: 3
+human_in_the_loop: true
+default_branch: main
+pr_target_branch: main
+corporate_report_channels:
+  - console

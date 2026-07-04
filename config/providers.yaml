@@ -1,0 +1,30 @@
+# LLM provider configuration
+# API keys and endpoint URLs are read from environment variables via ${ENV_VAR} interpolation.
+
+openai:
+  api_key: ${OPENAI_API_KEY}
+  # base_url: optional
+
+anthropic:
+  api_key: ${ANTHROPIC_API_KEY}
+
+google:
+  api_key: ${GOOGLE_API_KEY}
+  # base_url: optional
+
+azure_openai:
+  api_key: ${AZURE_OPENAI_API_KEY}
+  base_url: ${AZURE_OPENAI_ENDPOINT}
+  api_version: ${AZURE_OPENAI_API_VERSION:-2024-06-01}
+
+ollama:
+  base_url: http://localhost:11434
+
+# Kimi (Moonshot AI) uses an OpenAI-compatible API endpoint.
+kimi:
+  api_key: ${KIMI_API_KEY}
+  base_url: https://api.moonshot.cn/v1
+
+# Mock provider used for tests / dry runs without real LLM calls
+mock:
+  pass_through: true
