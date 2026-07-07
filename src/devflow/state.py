@@ -7,6 +7,8 @@ from typing import Annotated, Any, TypedDict, TypeVar
 
 from pydantic import BaseModel, Field
 
+from devflow.schemas import Plan, ResearchRequest, ResearchResult
+
 T = TypeVar("T")
 
 
@@ -30,24 +32,6 @@ class Task(BaseModel):
     description: str
     status: str = "open"
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class PlanStep(BaseModel):
-    """A single step in an implementation plan."""
-
-    id: str
-    description: str
-    files_to_touch: list[str] = Field(default_factory=list)
-    tests_to_add: list[str] = Field(default_factory=list)
-    estimated_risk: str = "low"
-
-
-class Plan(BaseModel):
-    """Implementation plan produced by the planner."""
-
-    summary: str
-    steps: list[PlanStep]
-    notes: str = ""
 
 
 class CheckerVerdict(StrEnum):
@@ -107,3 +91,9 @@ class WorkflowState(TypedDict, total=False):
     report_url: str | None
     error: WorkflowError | None
     logs: Annotated[list[str], _add_reducer]
+
+    # On-demand research fields
+    research_request: ResearchRequest | None
+    last_research_result: ResearchResult | None
+    research_results: Annotated[list[ResearchResult], _add_reducer]
+    research_call_count: Annotated[int, _max_reducer]

@@ -5,8 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langgraph.types import Command
+
 from devflow.config import Config
 from devflow.llm_factory import build_llm
+from devflow.nodes.research import (
+    format_research_context,
+    request_research_command,
+    research_budget_exceeded,
+    take_research_result,
+)
 from devflow.state import Plan, WorkflowError, WorkflowState
 from devflow.tools.code_tools import CodeTools
 from devflow.utils.structured_llm import call_structured
@@ -19,7 +27,7 @@ def planner_node(
     *,
     app_cfg: Config,
     repo_path: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | Command:
     """Generate an implementation plan for the current task."""
     task = state.get("task")
     if task is None:
@@ -35,6 +43,8 @@ def planner_node(
             "logs": ["planner: error - planner agent config not found"],
         }
 
+    research_result = take_research_result(state, "planner")
+
     try:
         llm = build_llm(agent_cfg, app_cfg)
         repo_context = _build_repo_context(repo_path)
@@ -47,13 +57,24 @@ Description:
 Repository context:
 {repo_context}
 
+{format_research_context(research_result)}
+
 Produce an implementation plan following the configured format.
+If you need additional research before planning, set `research_request.query`.
 """
 
         plan = call_structured(llm, agent_cfg.system_prompt, user_prompt, Plan)
+
+        if plan.research_request is not None and not research_budget_exceeded(state, app_cfg):
+            plan.research_request.caller = "planner"
+            plan.research_request.context = user_prompt
+            logger.info("Planner requested research: %s", plan.research_request.query)
+            return request_research_command(plan.research_request)
+
         logger.info("Planner produced plan with %d steps", len(plan.steps))
         return {
             "plan": plan,
+            "last_research_result": None,
             "logs": [f"planner: produced plan with {len(plan.steps)} steps"],
         }
     except Exception as exc:

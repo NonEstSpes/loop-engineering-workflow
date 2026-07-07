@@ -11,15 +11,22 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 
-from devflow.config import AgentConfig, Config, ProviderConfig, WorkflowConfig
+from devflow.config import (
+    AgentConfig,
+    Config,
+    ProviderConfig,
+    ResearchSourcesConfig,
+    WorkflowConfig,
+)
 from devflow.mcp.mock import MockTaskSource
 from devflow.schemas import (
     ApprovalResponse,
     MakerResponse,
+    PlanStep,
     ReporterResponse,
     SelfReviewResponse,
 )
-from devflow.state import CheckerReport, CheckerVerdict, Plan, PlanStep
+from devflow.state import CheckerReport, CheckerVerdict, Plan
 
 
 @pytest.fixture
@@ -70,6 +77,7 @@ def mock_config(temp_dir: Path) -> Config:
             "checker_b",
             "checker_c",
             "reporter",
+            "research",
         ]
     }
 
@@ -92,7 +100,12 @@ def mock_config(temp_dir: Path) -> Config:
         encoding="utf-8",
     )
 
-    return Config(workflow=workflow, providers=providers, agents=agents)
+    return Config(
+        workflow=workflow,
+        providers=providers,
+        agents=agents,
+        research_sources=ResearchSourcesConfig(),
+    )
 
 
 class FakeStructuredRunnable:

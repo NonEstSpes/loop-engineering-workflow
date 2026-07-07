@@ -5,8 +5,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langgraph.types import Command
+
 from devflow.config import Config
 from devflow.llm_factory import build_llm
+from devflow.nodes.research import (
+    format_research_context,
+    request_research_command,
+    research_budget_exceeded,
+    take_research_result,
+)
 from devflow.schemas import FileOperation, MakerResponse
 from devflow.state import Plan, Task, WorkflowError, WorkflowState
 from devflow.tools.code_tools import CodeTools
@@ -23,7 +31,7 @@ def maker_node(
     repo_path: str,
     base_branch: str = "main",
     git_user: tuple[str, str] = ("DevFlow", "devflow@local"),
-) -> dict[str, Any]:
+) -> dict[str, Any] | Command:
     """Implement the plan in a fresh git worktree."""
     task = state.get("task")
     plan = state.get("plan")
@@ -40,25 +48,35 @@ def maker_node(
             "logs": ["maker: error - maker agent config not found"],
         }
 
-    manager: GitWorktreeManager | None = None
+    research_result = take_research_result(state, "maker")
+
     try:
+        # Build the prompt and ask the LLM for operations before touching the repo.
+        code_tools = CodeTools(repo_path)
+        file_tree = code_tools.list_tree()[:100]
+
+        llm = build_llm(agent_cfg, app_cfg)
+        user_prompt = _build_maker_prompt(task, plan, file_tree, research_result)
+        response = call_structured(llm, agent_cfg.system_prompt, user_prompt, MakerResponse)
+
+        if response.research_request is not None and not research_budget_exceeded(state, app_cfg):
+            response.research_request.caller = "maker"
+            response.research_request.context = user_prompt
+            logger.info("Maker requested research: %s", response.research_request.query)
+            return request_research_command(response.research_request)
+
+        # Now that we know what to change, create the worktree and apply operations.
         manager = GitWorktreeManager(repo_path, base_branch=base_branch)
         worktree_path = manager.create(task.id)
         manager.configure_user(*git_user)
 
-        code_tools = CodeTools(worktree_path)
-        file_tree = code_tools.list_tree()[:100]
-
-        llm = build_llm(agent_cfg, app_cfg)
-        user_prompt = _build_maker_prompt(task, plan, file_tree)
-        response = call_structured(llm, agent_cfg.system_prompt, user_prompt, MakerResponse)
-
-        _apply_operations(code_tools, response.operations)
+        worktree_tools = CodeTools(worktree_path)
+        _apply_operations(worktree_tools, response.operations)
 
         test_output = ""
         for cmd in response.test_commands:
             try:
-                test_output += code_tools.run_command(cmd) + "\n"
+                test_output += worktree_tools.run_command(cmd) + "\n"
             except Exception as exc:
                 test_output += f"Command {' '.join(cmd)} failed: {exc}\n"
 
@@ -70,6 +88,7 @@ def maker_node(
             "worktree_path": str(worktree_path),
             "branch_name": manager.branch_name,
             "diff": diff,
+            "last_research_result": None,
             "logs": [
                 f"maker: implemented {len(response.operations)} operations",
                 f"maker: test output\n{test_output}",
@@ -81,12 +100,14 @@ def maker_node(
             "error": WorkflowError(node="maker", message=str(exc)),
             "logs": [f"maker: error {exc}"],
         }
-    finally:
-        # Do not auto-cleanup so the reporter can use the branch later.
-        pass
 
 
-def _build_maker_prompt(task: Task, plan: Plan, file_tree: list[str]) -> str:
+def _build_maker_prompt(
+    task: Task,
+    plan: Plan,
+    file_tree: list[str],
+    research_result: Any | None,
+) -> str:
     prompt = f"""Task ID: {task.id}
 Title: {task.title}
 Description:
@@ -105,9 +126,11 @@ Steps:
             prompt += f"  Tests: {', '.join(step.tests_to_add)}\n"
 
     prompt += "\nRepository files:\n" + "\n".join(file_tree)
+    prompt += "\n\n" + format_research_context(research_result)
     prompt += """
 
 Produce file operations to implement the plan. For edits, provide `old_string` and `content`.
+If you need additional research before implementing, set `research_request.query`.
 Provide test commands as lists of shell arguments (e.g. [["pytest", "tests/unit"]]).
 """
     return prompt

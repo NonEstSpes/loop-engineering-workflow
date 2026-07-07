@@ -47,12 +47,30 @@ class WorkflowConfig(BaseModel):
     corporate_report_channels: list[str] = Field(default_factory=list)
 
 
+class ResearchSourceConfig(BaseModel):
+    """Configuration for a single research source driver."""
+
+    name: str
+    driver: str
+    enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResearchSourcesConfig(BaseModel):
+    """Aggregated research source configuration."""
+
+    request_human_clarification: bool = False
+    max_research_calls_per_node: int = 3
+    sources: list[ResearchSourceConfig] = Field(default_factory=list)
+
+
 class Config(BaseModel):
     """Aggregated application configuration."""
 
     workflow: WorkflowConfig
     providers: dict[str, ProviderConfig]
     agents: dict[str, AgentConfig]
+    research_sources: ResearchSourcesConfig = Field(default_factory=ResearchSourcesConfig)
 
 
 def load_agent_config(path: Path) -> AgentConfig:
@@ -129,6 +147,21 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
         raise ValueError(f"Invalid workflow config: {path}") from exc
 
 
+def load_research_sources(path: Path) -> ResearchSourcesConfig:
+    """Load research source configs from a YAML file with environment interpolation."""
+    if not path.exists():
+        return ResearchSourcesConfig()
+    with path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    raw = _resolve_env_recursive(raw)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid research sources config: {path}")
+    try:
+        return ResearchSourcesConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid research sources config: {path}") from exc
+
+
 def load_config(config_dir: str = "config") -> Config:
     """Load full configuration from the config directory."""
     config_path = Path(config_dir)
@@ -136,8 +169,14 @@ def load_config(config_dir: str = "config") -> Config:
     workflow = load_workflow_config(config_path / "workflow.yaml")
     providers = load_providers(config_path / "providers.yaml")
     agents = load_agents(config_path / "agents")
+    research_sources = load_research_sources(config_path / "research_sources.yaml")
 
     if not agents:
         raise ValueError(f"No agent configs found in {config_path / 'agents'}")
 
-    return Config(workflow=workflow, providers=providers, agents=agents)
+    return Config(
+        workflow=workflow,
+        providers=providers,
+        agents=agents,
+        research_sources=research_sources,
+    )

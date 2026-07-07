@@ -1,0 +1,51 @@
+# Research source configuration
+#
+# `sources` is a list of research drivers. `driver` selects the implementation,
+# `enabled` controls whether the source is active, and `config` is passed to the
+# driver. Environment variables are interpolated via ${ENV_VAR} syntax.
+
+request_human_clarification: false
+max_research_calls_per_node: 3
+
+sources:
+  - name: graphify_mcp
+    driver: graphify_mcp
+    enabled: false
+    config:
+      server_url: ${GRAPHIFY_MCP_URL:-http://localhost:8000}
+      max_results: 10
+
+  - name: mcp_generic
+    driver: mcp_generic
+    enabled: false
+    config:
+      server:
+        transport: stdio
+        command: npx
+        args:
+          - -y
+          - "@modelcontextprotocol/server-filesystem"
+          - /tmp
+      tool: search
+      query_field: query
+
+  - name: git_tools
+    driver: git_tools
+    enabled: true
+    config:
+      repo_path: .
+
+  - name: file_system
+    driver: file_system
+    enabled: true
+    config:
+      root: .
+
+  - name: web_search
+    driver: web_search
+    enabled: false
+    config:
+      max_results: 5
+      timeout: 30
+      api_key: ${WEB_SEARCH_API_KEY}
+      engine: ${WEB_SEARCH_ENGINE:-duckduckgo}

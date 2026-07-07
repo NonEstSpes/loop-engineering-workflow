@@ -42,3 +42,7 @@ format. Structured agents should include a JSON schema example in their prompt.
 ## Example: planner
 
 See `config/agents/planner.md` for a complete example.
+
+## Research agent
+
+The `research` agent config in `config/agents/research.md` provides the system prompt used when synthesizing findings from multiple research sources. It is invoked implicitly by the `research` node, not as a regular workflow node.

@@ -15,7 +15,8 @@ parallel checker subagents, and isolated git worktrees.
 6. **Self Review** reviews the generated diff.
 7. **Checkers** run correctness, security, and maintainability audits in parallel.
 8. **Aggregate Checker** combines checker reports and decides whether to rework.
-9. **Reporter** generates PR descriptions, corporate reports, and updates the tracker.
+9. **Research** (on-demand) gathers context from MCP servers, git, files, or web when agents need it.
+10. **Reporter** generates PR descriptions, corporate reports, and updates the tracker.
 
 ## Install
 
@@ -63,9 +64,9 @@ devflow-super visualize --output graph.mmd
 
 The workflow is modeled as a LangGraph `StateGraph` over `WorkflowState`.
 Persistence uses `InMemorySaver` by default; supply a custom checkpointer
-for production use. Conditional edges route between maker, reporter, and
-checker nodes based on plan approval, self-review status, and aggregate
-checker verdicts.
+for production use. Conditional edges route between maker, reporter, checker,
+and research nodes based on plan approval, self-review status, aggregate
+checker verdicts, and on-demand research requests.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full Mermaid
 diagram and node descriptions.

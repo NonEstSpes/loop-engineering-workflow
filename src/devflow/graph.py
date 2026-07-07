@@ -22,6 +22,7 @@ from devflow.nodes.orchestrator import orchestrator_node
 from devflow.nodes.plan_approval import plan_approval_node
 from devflow.nodes.planner import planner_node
 from devflow.nodes.reporter import reporter_node
+from devflow.nodes.research import research_node
 from devflow.nodes.self_review import self_review_node
 from devflow.nodes.task_fetcher import task_fetcher_node
 from devflow.state import FinalVerdict, WorkflowState
@@ -90,6 +91,10 @@ def build_graph(
         "reporter",
         partial(reporter_node, app_cfg=app_cfg),
     )
+    graph.add_node(
+        "research",
+        partial(research_node, app_cfg=app_cfg),
+    )
 
     graph.add_edge(START, "orchestrator")
     graph.add_edge("orchestrator", "task_fetcher")
@@ -111,6 +116,16 @@ def build_graph(
         "aggregate_checker",
         partial(_after_aggregate_checker, app_cfg=app_cfg),
         {"maker": "maker", "reporter": "reporter"},
+    )
+    graph.add_conditional_edges(
+        "research",
+        _after_research,
+        {
+            "planner": "planner",
+            "maker": "maker",
+            "self_review": "self_review",
+            "run_checker": "run_checker",
+        },
     )
     graph.add_edge("reporter", END)
 
@@ -176,6 +191,14 @@ def _after_aggregate_checker(state: WorkflowState, *, app_cfg: Config) -> str:
     # ESCALATE or unknown verdict
     logger.info("Routing aggregate_checker -> reporter (escalate)")
     return "reporter"
+
+
+def _after_research(state: WorkflowState) -> str:
+    """Route after research back to the node that requested it."""
+    result = state.get("last_research_result")
+    caller = result.caller if result is not None else "reporter"
+    logger.info("Routing research -> %s", caller)
+    return caller
 
 
 def run_workflow(

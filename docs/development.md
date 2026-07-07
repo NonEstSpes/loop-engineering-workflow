@@ -50,7 +50,7 @@ pytest tests/integration -q
 
 ```
 use-superpowers/
-├── config/             # Agent, provider, and workflow configuration
+├── config/             # Agent, provider, workflow, and research source configuration
 ├── docs/               # Documentation
 ├── src/devflow/        # Source code
 │   ├── cli.py
@@ -59,6 +59,7 @@ use-superpowers/
 │   ├── llm_factory.py
 │   ├── mcp/            # Task source adapters
 │   ├── nodes/          # LangGraph node implementations
+│   ├── research/       # On-demand research sources and MCP client
 │   ├── schemas.py
 │   ├── state.py
 │   ├── tools/          # Code and git helpers
