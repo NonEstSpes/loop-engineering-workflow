@@ -1,7 +1,7 @@
 ---
 name: planner
-provider: kimi
-model: kimi-code/kimi-for-coding
+provider: openai
+model: GLM-5.2
 temperature: 0.3
 skills:
   - requirements-analysis

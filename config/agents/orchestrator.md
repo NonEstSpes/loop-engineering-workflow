@@ -1,7 +1,7 @@
 ---
 name: orchestrator
-provider: kimi
-model: kimi-code/kimi-for-coding
+provider: openai
+model: GLM-5.2
 temperature: 0.2
 skills:
   - workflow-management
