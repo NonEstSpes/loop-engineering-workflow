@@ -93,8 +93,22 @@ def load_agents(agents_dir: Path) -> dict[str, AgentConfig]:
     agents: dict[str, AgentConfig] = {}
     if not agents_dir.exists():
         return agents
+    override_provider = os.getenv("DEVFLOW_PROVIDER_OVERRIDE")
+    override_model = os.getenv("DEVFLOW_MODEL_OVERRIDE")
+    override_temperature = os.getenv("DEVFLOW_TEMPERATURE_OVERRIDE")
     for file_path in sorted(agents_dir.glob("*.md")):
         cfg = load_agent_config(file_path)
+        if override_provider:
+            cfg.provider = override_provider
+        if override_model:
+            cfg.model = override_model
+        if override_temperature:
+            try:
+                cfg.temperature = float(override_temperature)
+            except ValueError as exc:
+                raise ValueError(
+                    f"DEVFLOW_TEMPERATURE_OVERRIDE must be a float, got {override_temperature!r}"
+                ) from exc
         agents[cfg.name] = cfg
     return agents
 
@@ -147,6 +161,13 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
     with path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     raw = _resolve_env_recursive(raw)
+    # Allow one-shot overrides for CI / mock runs
+    hil_override = os.getenv("DEVFLOW_HUMAN_IN_THE_LOOP")
+    if hil_override is not None:
+        raw["human_in_the_loop"] = hil_override.lower() in {"true", "1", "yes"}
+    branch_override = os.getenv("DEVFLOW_DEFAULT_BRANCH")
+    if branch_override:
+        raw["default_branch"] = branch_override
     try:
         return WorkflowConfig.model_validate(raw)
     except ValidationError as exc:

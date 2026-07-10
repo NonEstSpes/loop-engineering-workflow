@@ -29,7 +29,7 @@ providers:
   kimi:
     type: openai_compatible
     api_key: ${KIMI_API_KEY}
-    base_url: https://api.kimi.com/coding
+    base_url: https://api.kimi.com/coding/v1
     timeout: 120
     max_retries: 3
 

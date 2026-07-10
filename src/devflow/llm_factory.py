@@ -87,6 +87,11 @@ def _build_llm_impl(agent_cfg: AgentConfig, app_cfg: Config) -> BaseChatModel:
             params["base_url"] = base_url
         return ChatOllama(**params)
 
+    if provider in {"mock"}:
+        from devflow.mock_llm import MockChatModel
+
+        return MockChatModel()
+
     raise ValueError(f"Unsupported LLM provider: {provider}")
 
 
@@ -101,4 +106,4 @@ def build_llm(agent_cfg: AgentConfig, app_cfg: Config) -> BaseChatModel:
 
 def list_supported_providers() -> list[str]:
     """Return the list of provider names known to the factory."""
-    return ["openai", "kimi", "anthropic", "google", "azure", "ollama"]
+    return ["openai", "kimi", "anthropic", "google", "azure", "ollama", "mock"]

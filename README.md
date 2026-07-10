@@ -54,6 +54,13 @@ Process all open tasks:
 devflow-super run-all --repo-path ./my-repo --limit 5
 ```
 
+List tasks with status, progress, and problems:
+
+```bash
+devflow-super list-tasks --format table
+devflow-super list-tasks --start-task-id MOCK-1
+```
+
 Visualize the graph:
 
 ```bash
@@ -70,3 +77,6 @@ checker verdicts, and on-demand research requests.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full Mermaid
 diagram and node descriptions.
+
+For a complete operational guide — installation, API keys, configuration,
+monitoring, and troubleshooting — see [`docs/runbooks/operations.md`](docs/runbooks/operations.md).
