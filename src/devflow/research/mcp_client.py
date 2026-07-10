@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from contextlib import AsyncExitStack
 from typing import Any
@@ -11,6 +12,35 @@ from mcp import ClientSession, StdioServerParameters, Tool
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult
+
+# Network/transport environment variables forwarded into every stdio MCP
+# subprocess. The MCP SDK's get_default_environment() only whitelists a handful
+# of OS vars (PATH, SYSTEMROOT, ...), so proxy and CA-bundle settings would be
+# silently dropped unless we re-inject them here. SSE servers run in-process and
+# already inherit the full os.environ, so they need no special handling.
+_FORWARDED_NETWORK_ENV_VARS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE",
+)
+
+
+def _forward_network_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Return ``env`` with proxy/CA-bundle variables copied from ``os.environ``.
+
+    Values already present in ``env`` win over ``os.environ`` (setdefault), so a
+    caller can force a specific proxy/cert for one server if needed. Variables
+    that are unset in both places are simply absent from the result.
+    """
+    merged: dict[str, str] = dict(env or {})
+    for var in _FORWARDED_NETWORK_ENV_VARS:
+        value = os.getenv(var)
+        if value:
+            merged.setdefault(var, value)
+    return merged
 
 
 class McpClient:
@@ -79,7 +109,7 @@ class McpClient:
                 params = StdioServerParameters(
                     command=self.server_config["command"],
                     args=self.server_config.get("args", []),
-                    env=self.server_config.get("env"),
+                    env=_forward_network_env(self.server_config.get("env")),
                 )
                 read, write = await self._exit_stack.enter_async_context(
                     stdio_client(params)
