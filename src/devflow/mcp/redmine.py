@@ -10,6 +10,7 @@ adapter is a thin mapping layer between Redmine's REST resources and the
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import yaml
@@ -37,7 +38,13 @@ _STATUS_FILTERS = {"open", "closed", "new"}
 
 
 def _extract_text(result: CallToolResult) -> str:
-    """Flatten an MCP tool result into a single text string (YAML/JSON)."""
+    """Flatten an MCP tool result into a single text string (YAML/JSON).
+
+    ``runekaagaard/mcp-redmine`` wraps every response body in an
+    ``<insecure-content-HASH>...</insecure-content-HASH>`` pair so the host
+    LLM treats it as untrusted content. Those markers are not valid YAML/JSON,
+    so strip them before handing the text to the parser.
+    """
     parts: list[str] = []
     for item in result.content:
         if isinstance(item, TextContent):
@@ -48,7 +55,43 @@ def _extract_text(result: CallToolResult) -> str:
                 parts.append(str(resource.text))
             elif hasattr(resource, "blob"):
                 parts.append("<binary resource>")
-    return "\n".join(parts)
+    return _strip_insecure_content_markers("\n".join(parts))
+
+
+# Matches ``<insecure-content-HASH>`` and the matching closing tag, where HASH
+# is a short hex suffix (e.g. ``8d06470fc6c94f88``). Greedy on the body so a
+# single regex removes both tags of a pair regardless of newlines.
+_INSECURE_CONTENT_RE = re.compile(
+    r"</?insecure-content-[0-9a-fA-F]+>",
+)
+
+
+def _strip_insecure_content_markers(text: str) -> str:
+    """Remove ``<insecure-content-HASH>`` open/close markers from ``text``."""
+    return _INSECURE_CONTENT_RE.sub("", text).strip()
+
+
+def _unwrap_envelope(parsed: Any) -> Any:
+    """Return the Redmine payload, unwrapping the MCP server's envelope.
+
+    ``runekaagaard/mcp-redmine`` wraps every response as
+    ``{status_code, body, error}``. We surface transport-level failures and
+    hand back the inner ``body`` (Redmine's actual JSON payload) to callers.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    if not {"status_code", "body"} <= parsed.keys():
+        return parsed
+    status = parsed.get("status_code")
+    body = parsed.get("body")
+    error = parsed.get("error")
+    # Treat only 2xx as success; anything else is a transport/API failure.
+    if isinstance(status, int) and not (200 <= status < 300):
+        raise RuntimeError(
+            f"Redmine request failed with status {status}"
+            + (f": {error}" if error else "")
+        )
+    return body if body is not None else {}
 
 
 class RedmineTaskSource(TaskSource):
@@ -100,7 +143,9 @@ class RedmineTaskSource(TaskSource):
         """Invoke ``redmine_request`` on the MCP server and parse the response.
 
         Returns the parsed YAML payload (typically a dict). The MCP server
-        returns YAML by default.
+        wraps Redmine's JSON in an ``{status_code, body, error}`` envelope and
+        returns YAML by default, so we unwrap ``body`` before handing the
+        result to callers.
         """
         arguments: dict[str, Any] = {"path": path, "method": method}
         if params is not None:
@@ -114,7 +159,8 @@ class RedmineTaskSource(TaskSource):
         text = _extract_text(result)
         if not text.strip():
             return {}
-        return yaml.safe_load(text)
+        parsed = yaml.safe_load(text)
+        return _unwrap_envelope(parsed)
 
     def _resolve_status_id(self, status: str) -> str | int:
         """Resolve a status name to its Redmine numeric id.
