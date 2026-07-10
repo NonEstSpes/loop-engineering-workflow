@@ -71,6 +71,9 @@ cp .env.example .env
 | `TASK_SOURCE_PROVIDER` | Task source | Legacy hint; real source is read from `config/workflow.yaml`. |
 | `REDMINE_URL` | Redmine source | Tracker base URL. |
 | `REDMINE_API_KEY` | Redmine source | REST API key. |
+| `REDMINE_HOST_HEADER` | Redmine source | Optional `Host` header (reverse proxy / vhost). |
+| `REDMINE_MCP_COMMAND` | Redmine source | MCP server launch command (default `uvx`); requires `uv` in `PATH`. |
+| `REDMINE_MCP_ARGS` | Redmine source | MCP server args (default `--from mcp-redmine mcp-redmine`). |
 | `JIRA_URL` | Jira source | Tracker base URL. |
 | `JIRA_USERNAME` | Jira source | User login. |
 | `JIRA_API_TOKEN` | Jira source | API token. |
