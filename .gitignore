@@ -9,3 +9,10 @@ __pycache__/
 .env
 .DS_Store
 *.log
+
+# Local-only CA certificates (corporate / self-signed) — never commit
+*.pem
+*.crt
+
+# ZCode local workspace state
+.zcode/

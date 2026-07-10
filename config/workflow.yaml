@@ -1,5 +1,5 @@
 # Top-level workflow wiring
-task_source: mock
+task_source: redmine
 max_rework_iterations: 3
 human_in_the_loop: true
 default_branch: main
