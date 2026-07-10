@@ -1,7 +1,7 @@
 ---
 name: self_review
 provider: kimi
-model: moonshot-v1-8k
+model: kimi-code/kimi-for-coding
 temperature: 0.2
 skills:
   - self-review

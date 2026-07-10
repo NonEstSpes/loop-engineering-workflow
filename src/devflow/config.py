@@ -30,9 +30,12 @@ class ProviderConfig(BaseModel):
     """Configuration for an LLM provider."""
 
     name: str
+    type: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     api_version: str | None = None
+    timeout: int | None = None
+    max_retries: int | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -124,8 +127,11 @@ def load_providers(path: Path) -> dict[str, ProviderConfig]:
     with path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     raw = _resolve_env_recursive(raw)
+    providers_raw = (
+        raw["providers"] if isinstance(raw.get("providers"), dict) else raw
+    )
     providers: dict[str, ProviderConfig] = {}
-    for name, data in raw.items():
+    for name, data in providers_raw.items():
         data["name"] = name
         try:
             providers[name] = ProviderConfig.model_validate(data)

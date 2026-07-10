@@ -1,7 +1,7 @@
 ---
 name: checker_c
 provider: kimi
-model: moonshot-v1-8k
+model: kimi-code/kimi-for-coding
 temperature: 1.0
 skills:
   - maintainability-review

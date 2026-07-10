@@ -84,3 +84,46 @@ def test_build_llm_rejects_unknown_provider(mock_config: Config) -> None:
 
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
         build_llm(agent_cfg, mock_config)
+
+
+def test_build_llm_uses_type_for_routing(mock_config: Config) -> None:
+    """A provider's `type` overrides its name when selecting the implementation."""
+    mock_config.providers["local"] = ProviderConfig(
+        name="local",
+        type="openai_compatible",
+        api_key="fake-local-key",
+    )
+    agent_cfg = AgentConfig(
+        name="planner",
+        provider="local",
+        model="qwen2.5",
+        system_prompt="You are a planner.",
+    )
+
+    llm = build_llm(agent_cfg, mock_config)
+
+    assert isinstance(llm, ChatOpenAI)
+
+
+def test_build_llm_passes_timeout_and_max_retries(mock_config: Config) -> None:
+    """Provider timeout and max_retries are forwarded to ChatOpenAI."""
+    mock_config.providers["local"] = ProviderConfig(
+        name="local",
+        type="openai_compatible",
+        api_key="fake-local-key",
+        base_url="http://localhost:11434/v1",
+        timeout=180,
+        max_retries=2,
+    )
+    agent_cfg = AgentConfig(
+        name="planner",
+        provider="local",
+        model="qwen2.5",
+        system_prompt="You are a planner.",
+    )
+
+    llm = build_llm(agent_cfg, mock_config)
+
+    assert isinstance(llm, ChatOpenAI)
+    assert llm.request_timeout == 180
+    assert llm.max_retries == 2

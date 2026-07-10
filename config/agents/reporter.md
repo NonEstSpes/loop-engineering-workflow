@@ -1,7 +1,7 @@
 ---
 name: reporter
 provider: kimi
-model: moonshot-v1-8k
+model: kimi-code/kimi-for-coding
 temperature: 0.3
 skills:
   - technical-writing

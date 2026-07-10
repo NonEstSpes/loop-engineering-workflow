@@ -1,30 +1,46 @@
 # LLM provider configuration
 # API keys and endpoint URLs are read from environment variables via ${ENV_VAR} interpolation.
 
-openai:
-  api_key: ${OPENAI_API_KEY}
-  base_url: http://127.0.0.1:1234
+providers:
+  openai:
+    type: openai_compatible
+    api_key: ${OPENAI_API_KEY}
+    base_url: http://127.0.0.1:1234
 
-anthropic:
-  api_key: ${ANTHROPIC_API_KEY}
+  anthropic:
+    type: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
 
-google:
-  api_key: ${GOOGLE_API_KEY}
-  # base_url: optional
+  google:
+    type: google
+    api_key: ${GOOGLE_API_KEY}
+    # base_url: optional
 
-azure_openai:
-  api_key: ${AZURE_OPENAI_API_KEY}
-  base_url: ${AZURE_OPENAI_ENDPOINT}
-  api_version: ${AZURE_OPENAI_API_VERSION:-2024-06-01}
+  azure_openai:
+    type: azure
+    api_key: ${AZURE_OPENAI_API_KEY}
+    base_url: ${AZURE_OPENAI_ENDPOINT}
+    api_version: ${AZURE_OPENAI_API_VERSION:-2024-06-01}
 
-ollama:
-  base_url: http://localhost:11434
+  ollama:
+    type: ollama
+    base_url: http://localhost:11434
 
-# Kimi (Moonshot AI) uses an OpenAI-compatible API endpoint.
-kimi:
-  api_key: ${KIMI_API_KEY}
-  base_url: https://api.moonshot.cn/v1
+  kimi:
+    type: openai_compatible
+    api_key: ${KIMI_API_KEY}
+    base_url: https://api.kimi.com/coding
+    timeout: 120
+    max_retries: 3
 
-# Mock provider used for tests / dry runs without real LLM calls
-mock:
-  pass_through: true
+  local:
+    type: openai_compatible
+    api_key: ${LOCAL_API_KEY:-dummy}
+    base_url: ${LOCAL_BASE_URL:-http://localhost:11434/v1}
+    timeout: 180
+    max_retries: 2
+
+  # Mock provider used for tests / dry runs without real LLM calls
+  mock:
+    type: mock
+    pass_through: true

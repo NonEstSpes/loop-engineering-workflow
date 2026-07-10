@@ -29,13 +29,18 @@ def _build_llm_impl(agent_cfg: AgentConfig, app_cfg: Config) -> BaseChatModel:
     for key, value in provider_cfg.extra.items():
         params.setdefault(key, value)
 
+    if provider_cfg.timeout is not None:
+        params.setdefault("timeout", provider_cfg.timeout)
+    if provider_cfg.max_retries is not None:
+        params.setdefault("max_retries", provider_cfg.max_retries)
+
     api_key = provider_cfg.api_key
     base_url = provider_cfg.base_url
     api_version = provider_cfg.api_version
 
-    provider = provider_cfg.name.lower()
+    provider = (provider_cfg.type or provider_cfg.name).lower()
 
-    if provider in {"openai", "kimi", "moonshot"}:
+    if provider in {"openai_compatible", "openai", "kimi", "moonshot"}:
         from langchain_openai import ChatOpenAI
 
         if api_key:

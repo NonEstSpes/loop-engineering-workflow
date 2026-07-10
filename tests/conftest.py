@@ -96,7 +96,13 @@ def mock_config(temp_dir: Path) -> Config:
         encoding="utf-8",
     )
     (temp_dir / "providers.yaml").write_text(
-        "mock:\n  pass_through: true\nopenai:\n  api_key: test-key\n",
+        "providers:\n"
+        "  mock:\n"
+        "    type: mock\n"
+        "    pass_through: true\n"
+        "  openai:\n"
+        "    type: openai_compatible\n"
+        "    api_key: test-key\n",
         encoding="utf-8",
     )
 
