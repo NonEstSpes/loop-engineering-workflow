@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from typing import Any
 
 from devflow.config import WorkflowConfig
@@ -31,10 +32,34 @@ def build_task_source(
 
     config: dict[str, Any]
     if name == "redmine":
+        url = os.getenv("REDMINE_URL", extra.get("url", ""))
+        api_key = os.getenv("REDMINE_API_KEY", extra.get("api_key", ""))
         config = {
-            "url": os.getenv("REDMINE_URL", extra.get("url", "")),
-            "api_key": os.getenv("REDMINE_API_KEY", extra.get("api_key", "")),
+            "url": url,
+            "api_key": api_key,
+            "host_header": os.getenv("REDMINE_HOST_HEADER", extra.get("host_header", "")),
         }
+        # Allow overriding how the Redmine MCP server is launched. ``extra``
+        # takes precedence over env, and an explicit ``server`` key wins over
+        # both (used by tests to inject a mock client config).
+        if "server" in extra:
+            config["server"] = extra["server"]
+        else:
+            command = os.getenv("REDMINE_MCP_COMMAND", extra.get("command", "uvx"))
+            args_env = os.getenv("REDMINE_MCP_ARGS", extra.get("args", "--from mcp-redmine mcp-redmine"))
+            server_env: dict[str, str] = {
+                "REDMINE_URL": url,
+                "REDMINE_API_KEY": api_key,
+            }
+            host_header = config["host_header"]
+            if host_header:
+                server_env["REDMINE_HOST_HEADER"] = host_header
+            config["server"] = {
+                "transport": "stdio",
+                "command": command,
+                "args": shlex.split(args_env),
+                "env": server_env,
+            }
     elif name == "jira":
         config = {
             "url": os.getenv("JIRA_URL", extra.get("url", "")),
