@@ -12,6 +12,59 @@ from devflow.schemas import Plan, ResearchRequest, ResearchResult
 T = TypeVar("T")
 
 
+# Checkbox markers driving the TODO.md task lifecycle.
+CHECKBOX_OPEN = "[ ]"
+CHECKBOX_IN_PROGRESS = "[~]"
+CHECKBOX_DONE = "[x]"
+
+# Sentinel id prefix for human-written TODO entries without a tracker reference.
+LOCAL_ID_PREFIX = "local"
+
+
+class TodoItem(BaseModel):
+    """A single parsed line of ``TODO.md``.
+
+    Lives in :mod:`devflow.state` (not :mod:`devflow.todo`) so that
+    :class:`WorkflowState` can reference it without a circular import:
+    ``todo`` imports ``Task`` from ``state``, so the data model must live in
+    the lower-level module.
+
+    Lines that do not look like a task entry (no checkbox, or no priority tag)
+    are still parsed so the file round-trips unchanged; they are simply skipped
+    during selection (``priority is None``).
+    """
+
+    raw_line: str
+    line_no: int  # 1-based position in the file
+    checkbox: str | None  # one of the CHECKBOX_* constants, or None for non-task lines
+    priority: int | None  # 0..5, or None when no #rX tag
+    task_ref: str | None  # tracker id without '#', e.g. "251977"
+    url: str | None
+    title: str
+    result: str | None  # inline result suffix, if the line already carries one
+
+    @property
+    def is_task(self) -> bool:
+        """True for lines the orchestrator can act on (valid checkbox)."""
+        return self.checkbox is not None
+
+    @property
+    def is_link(self) -> bool:
+        """True when the task references an external tracker (needs loading)."""
+        return self.task_ref is not None and self.url is not None
+
+    @property
+    def is_actionable(self) -> bool:
+        """True when the item is selectable: task + has priority + not done."""
+        return self.is_task and self.priority is not None
+
+    def task_id(self) -> str:
+        """Stable id for this TODO entry used to build a :class:`Task`."""
+        if self.task_ref is not None:
+            return self.task_ref
+        return f"{LOCAL_ID_PREFIX}-{self.line_no}"
+
+
 def _add_reducer(existing: list[T] | None, updates: list[T] | None) -> list[T]:
     """Append updates to an existing list (LangGraph reducer)."""
     existing = existing or []
@@ -77,6 +130,9 @@ class WorkflowState(TypedDict, total=False):
     """
 
     task: Task | None
+    # The TODO.md entry the orchestrator picked for this run. The reporter
+    # uses it to write the inline result back into the same line.
+    todo_item: TodoItem | None
     plan: Plan | None
     plan_approved: bool | None
     worktree_path: str | None

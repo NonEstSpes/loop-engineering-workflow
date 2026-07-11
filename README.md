@@ -61,6 +61,38 @@ devflow-super list-tasks --format table
 devflow-super list-tasks --start-task-id MOCK-1
 ```
 
+Generate a `TODO.md` backlog (sorted by priority, with `#r0`–`#r5` tags mapped
+from the tracker):
+
+```bash
+devflow-super list-tasks --todo
+devflow-super --todo-path path/to/TODO.md list-tasks --todo
+```
+
+### TODO.md format
+
+`TODO.md` is the orchestrator's task queue. Each line is a checkbox entry
+carrying a priority tag:
+
+```
+- [ ] #r0 [#251977](https://tracker/issues/251977) — Immediate fix
+- [ ] #r2 [#MOCK-1] — Refactor the loader
+- [ ] #r3 — A free-form human task with a priority
+- [ ] No tag here → ignored by the orchestrator
+```
+
+- **Priority** `#r0` (highest) … `#r5` (lowest). Lines without a tag are
+  preserved on disk but skipped. Ties are broken by topmost line.
+- **Checkbox lifecycle**: `[ ]` open → `[~]` in progress (set by the
+  orchestrator) → `[x]` done (set by the reporter, with an inline
+  ` — ✅ done: …` / ` — ⚠️ problem: …` suffix).
+- **Tracker links** `[#id](url)` are hydrated with full details from the
+  source; bracket refs without a URL (`[#MOCK-1]`) still resolve by id.
+  Lines without any reference become local tasks.
+
+If `TODO.md` is missing when the workflow starts, the orchestrator generates it
+from the open tracker tasks automatically.
+
 Visualize the graph:
 
 ```bash

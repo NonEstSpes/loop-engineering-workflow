@@ -53,7 +53,13 @@ def build_graph(
 
     graph.add_node(
         "orchestrator",
-        partial(orchestrator_node, app_cfg=app_cfg),
+        partial(
+            orchestrator_node,
+            app_cfg=app_cfg,
+            todo_path=app_cfg.workflow.todo_path,
+            task_source=task_source,
+            task_id=task_id,
+        ),
     )
     graph.add_node(
         "task_fetcher",

@@ -122,6 +122,9 @@ def main(
     env_file: Path | None = typer.Option(
         None, "--env-file", help="Path to a .env file to load"
     ),
+    todo_path: str | None = typer.Option(
+        None, "--todo-path", help="Path to TODO.md used by the orchestrator/reporter"
+    ),
 ) -> None:
     """Load environment, configure logging/tracing, and read application config."""
     if env_file is not None:
@@ -136,6 +139,10 @@ def main(
     except Exception as exc:
         console.print(f"[red]Configuration error:[/red] {exc}")
         raise typer.Exit(2) from exc
+
+    # CLI flag overrides config + DEVFLOW_TODO_PATH env for the TODO file.
+    if todo_path is not None:
+        app_cfg.workflow.todo_path = todo_path
 
     configure_tracing()
     ctx.obj = {"config": app_cfg, "verbose": verbose}
@@ -317,6 +324,11 @@ def list_tasks(
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress rich output"
     ),
+    todo: bool = typer.Option(
+        False,
+        "--todo",
+        help="Write the listed tasks to the TODO.md file (sorted by priority)",
+    ),
 ) -> None:
     """List tasks with their status, workflow progress, and any problems."""
     app_cfg: Config = ctx.obj["config"]
@@ -335,6 +347,9 @@ def list_tasks(
         else:
             _print_task_table(rows, quiet)
 
+        if todo:
+            _write_todo_file(app_cfg, tasks, quiet)
+
         if start_task_id is not None:
             console.print(f"\nStarting task {start_task_id}...")
             final_state = run_workflow(
@@ -346,6 +361,22 @@ def list_tasks(
             _print_final_state(final_state)
     finally:
         task_source.close()
+
+
+def _write_todo_file(app_cfg: Config, tasks: list[Task], quiet: bool) -> None:
+    """Generate/overwrite ``TODO.md`` from ``tasks`` sorted by priority."""
+    from devflow.todo import generate_todo_from_source, write_todo
+
+    path = Path(app_cfg.workflow.todo_path)
+    items = generate_todo_from_source(tasks)
+    header = (
+        "# TODO\n\n"
+        "> Сгенерировано `devflow-super list-tasks --todo`.\n"
+        "> Приоритеты: #r0 (высший) — #r5 (низший). Строки без #rX игнорируются."
+    )
+    write_todo(path, items, header=header)
+    if not quiet:
+        console.print(f"Wrote {len(items)} task(s) to {path}")
 
 
 def _task_row(task: Task, app_cfg: Config, task_source: TaskSource) -> dict[str, str]:

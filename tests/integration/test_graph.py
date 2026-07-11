@@ -56,3 +56,44 @@ def test_workflow_happy_path(
     assert final_state.get("final_verdict") == FinalVerdict.APPROVE
     assert final_state.get("error") is None
     assert final_state.get("pr_url") is not None or final_state.get("report_url") is not None
+
+
+def test_workflow_driven_by_todo(
+    temp_git_repo: Path,
+    mock_config: object,
+    fake_llm_factory: object,
+    tmp_path: Path,
+) -> None:
+    """The orchestrator picks a task from TODO.md and the reporter marks it done.
+
+    No --task-id is passed, so the orchestrator must read TODO.md, select the
+    topmost entry by priority, hydrate it from the mock source, run the graph,
+    and have the reporter write the inline result back into the same line.
+    """
+    todo_path = tmp_path / "TODO.md"
+    todo_path.write_text(
+        "- [ ] #r2 [#MOCK-2] — Lower priority\n"
+        "- [ ] #r0 [#MOCK-1] — Immediate\n",
+        encoding="utf-8",
+    )
+    mock_config.workflow.todo_path = str(todo_path)  # type: ignore[union-attr]
+
+    final_state = run_workflow(
+        app_cfg=mock_config,
+        repo_path=str(temp_git_repo),
+        thread_id="todo-thread",
+    )
+
+    # The r0 entry (MOCK-1) wins over r2.
+    task = final_state.get("task")
+    assert isinstance(task, Task)
+    assert task.id == "MOCK-1"
+    assert final_state.get("final_verdict") == FinalVerdict.APPROVE
+    assert final_state.get("todo_item") is not None
+
+    # The reporter updated the originating TODO line in place.
+    text = todo_path.read_text(encoding="utf-8")
+    assert "- [x]" in text
+    assert "✅ done:" in text
+    # The lower-priority line stays untouched.
+    assert "- [ ] #r2 [#MOCK-2] — Lower priority" in text

@@ -48,6 +48,10 @@ class WorkflowConfig(BaseModel):
     default_branch: str = "main"
     pr_target_branch: str = "main"
     corporate_report_channels: list[str] = Field(default_factory=list)
+    # Path to the TODO.md file that the orchestrator reads task entries from
+    # and the reporter writes completion results back to. May be overridden by
+    # the --todo-path CLI flag or the DEVFLOW_TODO_PATH env variable.
+    todo_path: str = "TODO.md"
 
 
 class ResearchSourceConfig(BaseModel):
@@ -168,6 +172,9 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
     branch_override = os.getenv("DEVFLOW_DEFAULT_BRANCH")
     if branch_override:
         raw["default_branch"] = branch_override
+    todo_override = os.getenv("DEVFLOW_TODO_PATH")
+    if todo_override:
+        raw["todo_path"] = todo_override
     try:
         return WorkflowConfig.model_validate(raw)
     except ValidationError as exc:

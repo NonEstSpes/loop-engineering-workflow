@@ -75,8 +75,8 @@ flowchart TD
 
 | Node | Responsibility |
 |------|----------------|
-| `orchestrator` | Initializes state, resets reducers, logs the task. |
-| `task_fetcher` | Loads a task from the configured `TaskSource` by ID or fetches the first open task. |
+| `orchestrator` | Reads `TODO.md`, selects the topmost actionable task by `#r0`–`#r5` priority, marks it `[~]` (in progress), hydrates tracker links via `get_task_details`, and puts the task into state. Generates `TODO.md` from the task source if the file is missing. Defers to `task_fetcher` when an explicit `--task-id` is passed. |
+| `task_fetcher` | Loads a task from the configured `TaskSource` by ID, or passes through when the orchestrator already placed a task in state. |
 | `planner` | Generates an implementation `Plan` with steps, files to touch, and tests. Can request on-demand research via `Command(goto="research")`. |
 | `plan_approval` | Human-in-the-loop gate. Auto-approves when `human_in_the_loop=false` or `auto_approve=true`. |
 | `maker` | Checks out a fresh git worktree, applies file operations, runs tests, and commits. Can request on-demand research before applying changes. |
@@ -84,7 +84,40 @@ flowchart TD
 | `run_checker` | Runs a single checker subagent. Dispatched in parallel for `checker_a`, `checker_b`, `checker_c`. |
 | `aggregate_checker` | Aggregates checker reports into `final_verdict` and increments `rework_count`. |
 | `research` | Runs an on-demand research query against configured sources (MCP, git, filesystem, web) and returns the result to the caller node. |
-| `reporter` | Produces PR description, corporate report, and updates the external task tracker. |
+| `reporter` | Produces PR description and corporate report, publishes to notification channels, updates the external task tracker status, and writes a short inline result (`[x] — ✅ done: …` / `⚠️ problem: …`) back into the originating `TODO.md` line. |
+
+## TODO.md task queue
+
+`TODO.md` (path configurable via `workflow.todo_path`, `--todo-path`, or
+`DEVFLOW_TODO_PATH`) is the orchestrator's entry queue. Each actionable line is
+a markdown checkbox carrying a priority tag:
+
+```
+- [ ] #r0 [#251977](https://tracker/issues/251977) — Immediate fix
+- [ ] #r2 [#MOCK-1] — Refactor the loader
+- [ ] #r3 — A free-form human task
+```
+
+The lifecycle of a line:
+
+1. **`[ ]` open** — selectable. The orchestrator picks the entry with the
+   smallest `#r` (highest priority); ties go to the topmost line. Lines
+   without a `#rX` tag are preserved on disk but never selected.
+2. **`[~]` in progress** — the orchestrator flips the checkbox when it takes
+   the task, so a crashed run is not silently restarted on the next launch
+   (flip it back to `[ ]` manually to retry).
+3. **`[x]` done** — the reporter appends an inline result suffix
+   (` — ✅ done: …` on approve, ` — ⚠️ problem: …` otherwise) and caps it to
+   ~200 characters.
+
+Tracker links (`[#id](url)`) are hydrated with full details from the task
+source; bracket refs without a URL (`[#MOCK-1]`) still resolve by id. Entries
+without any reference become local tasks whose id is derived from their line
+number.
+
+If `TODO.md` does not exist when the workflow starts, the orchestrator
+generates it from the source's open tasks (sorted by priority). The same
+generation logic is exposed as `devflow-super list-tasks --todo`.
 
 ## On-demand research
 
