@@ -56,8 +56,9 @@ class TestParseTodo:
         item = parse_todo(path)[0]
         assert item.task_ref == "251977"
         assert item.url is None
-        # is_link requires both ref and url; bare refs are not auto-loaded.
-        assert item.is_link is False
+        # Any task_ref is a tracker reference (hydrated via get_task_details),
+        # regardless of whether a URL is present.
+        assert item.is_link is True
 
     def test_parses_human_entry(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "TODO.md", "- [ ] #r0 — Do something important\n")
@@ -238,6 +239,18 @@ class TestMarkDone:
         # The ref-bearing line got updated, the other stays open.
         assert "- [ ] #r0 — Other" in text
         assert "- [x]" in text and "✅ done: Done" in text
+
+    def test_appends_when_line_vanished_entirely(self, tmp_path: Path) -> None:
+        """If the TODO line was deleted mid-run, the result is appended, not lost."""
+        path = _write(tmp_path / "TODO.md", "- [ ] #r1 [#42](https://t/42) — Title\n")
+        item = parse_todo(path)[0]
+        # User deleted the line entirely before the reporter ran.
+        path.write_text("- [ ] #r0 — Unrelated task\n", encoding="utf-8")
+        mark_done(path, item, "Late result", kind="done")
+        text = path.read_text(encoding="utf-8")
+        # Original line is preserved; the result is appended at the end.
+        assert "- [ ] #r0 — Unrelated task" in text
+        assert "- [x]" in text and "✅ done: Late result" in text
 
 
 # ---------------------------------------------------------------------------

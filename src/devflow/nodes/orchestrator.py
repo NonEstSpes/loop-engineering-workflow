@@ -53,8 +53,9 @@ def orchestrator_node(
     task_id: str | None = None,
 ) -> dict[str, Any]:
     """Select the next task from ``TODO.md`` and put it into workflow state."""
-    # If a task is already in state (e.g. a re-entry during the same pass),
-    # delegate immediately without touching the TODO file.
+    # If a task is already in state, delegate immediately. This covers callers
+    # that build a task externally and pass it via run_workflow(initial_state=);
+    # the normal graph flow never re-enters this node.
     existing = state.get("task")
     if existing is not None:
         logger.info("Orchestrator received existing task %s", existing.id)

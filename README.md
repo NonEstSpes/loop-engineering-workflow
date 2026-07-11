@@ -91,7 +91,10 @@ carrying a priority tag:
   Lines without any reference become local tasks.
 
 If `TODO.md` is missing when the workflow starts, the orchestrator generates it
-from the open tracker tasks automatically.
+from the open tracker tasks automatically. If you have an older `TODO.md`
+written by a previous version of the tool, regenerate it with
+`devflow-super list-tasks --todo` so entries pick up the `#rX` priority tags
+the orchestrator selects on.
 
 Visualize the graph:
 

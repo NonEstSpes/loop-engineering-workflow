@@ -126,10 +126,15 @@ def _parse_line(raw: str, line_no: int) -> TodoItem:
 
 
 def _match_checkbox(raw: str) -> str | None:
-    for marker in _CHECKBOXES:
-        if marker in raw:
-            return marker
-    return None
+    """Return the checkbox marker if ``raw`` is a markdown task list item.
+
+    Requires a leading ``-``/``*`` bullet so that prose mentioning ``[ ]`` in
+    passing (e.g. ``"Note: use the [ ] symbol"``) is not misread as a task.
+    """
+    match = re.match(r"\s*[-*]\s+\[( |~|x)\]", raw)
+    if match is None:
+        return None
+    return f"[{match.group(1)}]"
 
 
 def _match_priority(raw: str) -> int | None:
@@ -261,8 +266,14 @@ def _replace_checkbox(raw: str, new_checkbox: str) -> str:
 
 
 def mark_in_progress(path: Path, item: TodoItem) -> None:
-    """Mark ``item`` as in-progress (``[~]``) in the TODO file."""
-    line_no = _locate_line(path, item) or item.line_no
+    """Mark ``item`` as in-progress (``[~]``) in the TODO file.
+
+    If the originating line can no longer be located (user deleted it), this
+    is a no-op: there is nothing to flip.
+    """
+    line_no = _locate_line(path, item)
+    if line_no is None:
+        return
     new_line = _replace_checkbox(item.raw_line, CHECKBOX_IN_PROGRESS)
     _rewrite_line(path, line_no, new_line)
 
@@ -278,6 +289,10 @@ def mark_done(
 
     ``kind`` is ``"done"`` for an approved verdict, ``"problem"`` otherwise.
     A previous result suffix on the line is replaced rather than duplicated.
+
+    If the originating line was deleted between the orchestrator and reporter
+    runs, the result line is appended to the end of the file so the outcome is
+    not silently lost.
     """
     suffix_template = _RESULT_SUFFIX.get(kind, _RESULT_SUFFIX["done"])
     suffix = suffix_template.format(text=result.replace("\n", " ").strip())
@@ -288,11 +303,12 @@ def mark_done(
     base = _replace_checkbox(base, CHECKBOX_DONE)
     new_line = f"{base} — {suffix}"
 
-    line_no = _locate_line(path, item) or item.line_no
-    if not _rewrite_line(path, line_no, new_line):
-        # Line vanished entirely: append so the result is not lost.
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(new_line + "\n")
+    line_no = _locate_line(path, item)
+    if line_no is not None and _rewrite_line(path, line_no, new_line):
+        return
+    # Line vanished entirely: append so the result is not lost.
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(new_line + "\n")
 
 
 # ---------------------------------------------------------------------------

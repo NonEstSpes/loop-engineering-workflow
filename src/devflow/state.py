@@ -50,8 +50,13 @@ class TodoItem(BaseModel):
 
     @property
     def is_link(self) -> bool:
-        """True when the task references an external tracker (needs loading)."""
-        return self.task_ref is not None and self.url is not None
+        """True when the entry references an external tracker id (needs hydration).
+
+        Any ``task_ref`` (with or without a URL) is treated as a tracker
+        reference and hydrated via ``get_task_details``; the URL is purely a
+        convenience for human readers of the file.
+        """
+        return self.task_ref is not None
 
     @property
     def is_actionable(self) -> bool:

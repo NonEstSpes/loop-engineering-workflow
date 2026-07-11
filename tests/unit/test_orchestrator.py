@@ -160,6 +160,26 @@ def test_human_entry_becomes_local_task(tmp_path: Path) -> None:
     assert source.detail_calls == []
 
 
+def test_bracket_ref_without_url_is_hydrated(tmp_path: Path) -> None:
+    """[#id] without a URL still resolves to the tracker (per docs)."""
+    path = tmp_path / "TODO.md"
+    path.write_text("- [ ] #r1 [#42] — Short title\n", encoding="utf-8")
+    source = _FakeTaskSource(
+        [_task("42", "Full tracker title", description="detailed description")]
+    )
+    result = orchestrator_node(
+        _state(),
+        app_cfg=None,  # type: ignore[arg-type]
+        todo_path=str(path),
+        task_source=source,
+    )
+    task = result["task"]
+    assert task.id == "42"
+    # Hydrated from the tracker, not from the TODO title.
+    assert source.detail_calls == ["42"]
+    assert task.description == "detailed description"
+
+
 # ---------------------------------------------------------------------------
 # error / empty cases
 # ---------------------------------------------------------------------------
@@ -195,3 +215,19 @@ def test_error_when_fetch_fails(tmp_path: Path) -> None:
     )
     assert "error" in result
     assert "tracker down" in result["error"].message
+
+
+def test_missing_todo_and_empty_source_yields_error(tmp_path: Path) -> None:
+    """First run against a tracker with no open tasks: no crash, clear error."""
+    path = tmp_path / "TODO.md"
+    source = _FakeTaskSource([])  # no tasks at all
+    result = orchestrator_node(
+        _state(),
+        app_cfg=None,  # type: ignore[arg-type]
+        todo_path=str(path),
+        task_source=source,
+    )
+    # A header-only TODO is generated; nothing is selectable → clear error.
+    assert "error" in result
+    assert result.get("task") is None
+    assert path.exists()  # the (empty) file was still created

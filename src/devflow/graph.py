@@ -104,7 +104,14 @@ def build_graph(
     )
 
     graph.add_edge(START, "orchestrator")
-    graph.add_edge("orchestrator", "task_fetcher")
+    # Short-circuit to the reporter on orchestrator errors (no actionable
+    # task, TODO read failure, hydration failure) so we do not waste a
+    # planner LLM call on a stale/empty state.
+    graph.add_conditional_edges(
+        "orchestrator",
+        _after_orchestrator,
+        {"task_fetcher": "task_fetcher", "reporter": "reporter"},
+    )
     graph.add_edge("task_fetcher", "planner")
     graph.add_edge("planner", "plan_approval")
     graph.add_conditional_edges(
@@ -137,6 +144,14 @@ def build_graph(
     graph.add_edge("reporter", END)
 
     return graph.compile(checkpointer=checkpointer)
+
+
+def _after_orchestrator(state: WorkflowState) -> str:
+    """Route after the orchestrator: reporter on error, task_fetcher otherwise."""
+    if state.get("error"):
+        logger.info("Routing orchestrator -> reporter due to error")
+        return "reporter"
+    return "task_fetcher"
 
 
 def _after_plan_approval(state: WorkflowState) -> str:

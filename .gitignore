@@ -19,4 +19,5 @@ __pycache__/
 
 # TODO.md is generated/personal task backlog (tracker tasks + human entries).
 # The format is documented in README.md; each user keeps their own copy.
-TODO.md
+# Anchored to repo root so docs/examples TODO files are not accidentally ignored.
+/TODO.md
