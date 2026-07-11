@@ -133,3 +133,49 @@ def test_config_error_exits_with_code_2(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--config-dir", str(bad_config_dir), "list-tasks"])
     assert result.exit_code == 2
     assert "Configuration error" in result.output
+
+
+def test_list_tasks_todo_writes_file(config_dir: Path, tmp_path: Path) -> None:
+    todo_path = tmp_path / "TODO.md"
+    result = runner.invoke(
+        app,
+        [
+            "--config-dir",
+            str(config_dir),
+            "--todo-path",
+            str(todo_path),
+            "list-tasks",
+            "--todo",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 0
+    assert todo_path.exists()
+    content = todo_path.read_text(encoding="utf-8")
+    # Mock tasks have no Redmine priority metadata → default r5, but the file
+    # must still list them with a priority tag and checkbox.
+    assert "#r" in content
+    assert "[ ]" in content
+    assert "MOCK-1" in content
+    assert "MOCK-2" in content
+
+
+def test_todo_path_flag_overrides_config(config_dir: Path, tmp_path: Path) -> None:
+    """The --todo-path flag is plumbed into app_cfg.workflow.todo_path."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    todo_path = subdir / "TODO.md"
+    result = runner.invoke(
+        app,
+        [
+            "--config-dir",
+            str(config_dir),
+            "--todo-path",
+            str(todo_path),
+            "list-tasks",
+            "--todo",
+            "--quiet",
+        ],
+    )
+    assert result.exit_code == 0
+    assert todo_path.exists()

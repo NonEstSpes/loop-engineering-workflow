@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from devflow.config import Config
 from devflow.nodes.reporter import reporter_node
-from devflow.schemas import Plan, PlanStep
+from devflow.schemas import Plan, PlanStep, ReporterResponse
 from devflow.state import (
     CheckerReport,
     CheckerVerdict,
@@ -18,6 +19,7 @@ from devflow.state import (
     WorkflowError,
     WorkflowState,
 )
+from devflow.todo import CHECKBOX_DONE, TodoItem, parse_todo
 
 
 @pytest.fixture
@@ -114,3 +116,118 @@ def test_reporter_survives_channel_failure(
     assert result.get("error") is None
     # report_url is None because the only channel failed.
     assert result.get("report_url") is None
+
+
+# ---------------------------------------------------------------------------
+# TODO.md result recording
+# ---------------------------------------------------------------------------
+
+
+def _write_todo(tmp_path: Path, body: str) -> TodoItem:
+    path = tmp_path / "TODO.md"
+    path.write_text(body + "\n", encoding="utf-8")
+    return parse_todo(path)[0]
+
+
+def test_writes_done_result_into_todo_line(
+    tmp_path: Path, mock_config: Config, fake_llm_factory: object
+) -> None:
+    mock_config.workflow.todo_path = str(tmp_path / "TODO.md")
+    item = _write_todo(tmp_path, "- [~] #r1 [#42](https://t/42) — Fix the bug")
+    state: WorkflowState = {
+        "task": Task(id="42", title="Fix the bug", description="d"),
+        "plan": Plan(summary="s", steps=[PlanStep(id="1", description="d")]),
+        "diff": "diff",
+        "checker_reports": [],
+        "final_verdict": FinalVerdict.APPROVE,
+        "todo_item": item,
+    }
+
+    result = reporter_node(state, app_cfg=mock_config)
+
+    assert result.get("error") is None
+    text = (tmp_path / "TODO.md").read_text(encoding="utf-8")
+    assert CHECKBOX_DONE in text
+    assert "✅ done:" in text
+    assert "Fix the bug" in text
+
+
+def test_writes_problem_result_for_reject(
+    tmp_path: Path, mock_config: Config, fake_llm_factory: object
+) -> None:
+    mock_config.workflow.todo_path = str(tmp_path / "TODO.md")
+    item = _write_todo(tmp_path, "- [~] #r1 — Risky task")
+    state: WorkflowState = {
+        "task": Task(id="local-1", title="Risky task", description="d"),
+        "plan": Plan(summary="s", steps=[PlanStep(id="1", description="d")]),
+        "diff": "diff",
+        "checker_reports": [],
+        "final_verdict": FinalVerdict.REJECT,
+        "todo_item": item,
+    }
+
+    reporter_node(state, app_cfg=mock_config)
+
+    text = (tmp_path / "TODO.md").read_text(encoding="utf-8")
+    assert "⚠️ problem:" in text
+
+
+def test_skips_todo_when_no_todo_item(
+    tmp_path: Path, mock_config: Config, fake_llm_factory: object
+) -> None:
+    """A run without todo_item (e.g. explicit --task-id) leaves TODO untouched."""
+    todo_path = tmp_path / "TODO.md"
+    todo_path.write_text("- [ ] #r1 — Untouched\n", encoding="utf-8")
+    mock_config.workflow.todo_path = str(todo_path)
+    state: WorkflowState = {
+        "task": Task(id="MOCK-1", title="t", description="d"),
+        "plan": Plan(summary="s", steps=[PlanStep(id="1", description="d")]),
+        "diff": "diff",
+        "checker_reports": [],
+        "final_verdict": FinalVerdict.APPROVE,
+        "todo_item": None,
+    }
+
+    result = reporter_node(state, app_cfg=mock_config)
+
+    assert result.get("error") is None
+    assert todo_path.read_text(encoding="utf-8") == "- [ ] #r1 — Untouched\n"
+
+
+def test_truncates_long_report(
+    tmp_path: Path,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_config.workflow.todo_path = str(tmp_path / "TODO.md")
+    item = _write_todo(tmp_path, "- [~] #r1 [#42](https://t/42) — Title")
+
+    from tests.conftest import FakeChatModel
+
+    fake = FakeChatModel(
+        outputs={
+            ReporterResponse: ReporterResponse(
+                pr_title="t",
+                pr_description="d",
+                corporate_report="x" * 1000,
+            )
+        }
+    )
+    import devflow.llm_factory as llm_factory
+
+    monkeypatch.setattr(llm_factory, "_build_llm_impl", lambda cfg, app_cfg: fake)
+
+    state: WorkflowState = {
+        "task": Task(id="42", title="Title", description="d"),
+        "plan": Plan(summary="s", steps=[PlanStep(id="1", description="d")]),
+        "diff": "diff",
+        "checker_reports": [],
+        "final_verdict": FinalVerdict.APPROVE,
+        "todo_item": item,
+    }
+    reporter_node(state, app_cfg=mock_config)
+
+    text = (tmp_path / "TODO.md").read_text(encoding="utf-8")
+    # Full 1000-char blob is not dumped; truncation marker present.
+    assert "x" * 1000 not in text
+    assert "…" in text

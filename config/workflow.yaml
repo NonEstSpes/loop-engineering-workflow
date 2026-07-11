@@ -6,3 +6,7 @@ default_branch: main
 pr_target_branch: main
 corporate_report_channels:
   - console
+# Path to TODO.md — the orchestrator reads task entries from here (selecting by
+# #r0..#r5 priority) and the reporter writes the result back into the same line.
+# Override per-run with --todo-path or the DEVFLOW_TODO_PATH env variable.
+todo_path: TODO.md

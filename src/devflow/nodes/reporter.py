@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from devflow.config import Config
@@ -11,6 +12,7 @@ from devflow.mcp.factory import build_task_source
 from devflow.notifications.factory import build_notification_channels
 from devflow.schemas import ReporterResponse
 from devflow.state import CheckerReport, FinalVerdict, Task, WorkflowError, WorkflowState
+from devflow.todo import TodoItem, mark_done
 from devflow.utils.structured_llm import call_structured
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,10 @@ Checker reports:
 
         # Update task status in the source tracker if supported.
         updated_task = _update_task_status(app_cfg, task, verdict)
+
+        # Write a short inline result into the originating TODO.md line so the
+        # backlog stays in sync without a separate report file.
+        _record_todo_result(app_cfg, state, response, verdict)
 
         logger.info("Reporter finished for task %s", task.id)
         return {
@@ -220,3 +226,33 @@ def _placeholder_pr_url(app_cfg: Config, branch: str | None) -> str | None:
     if "gitlab" in channels:
         return f"https://gitlab.example.com/merge_requests/{branch}"
     return None
+
+
+# A short inline result is more useful in TODO.md than the full corporate
+# report; cap its length so lines stay scannable.
+_TODO_RESULT_MAX_LEN = 200
+
+
+def _record_todo_result(
+    app_cfg: Config,
+    state: WorkflowState,
+    response: ReporterResponse,
+    verdict: FinalVerdict | None,
+) -> None:
+    """Write a one-line completion result back into the originating TODO entry.
+
+    Failures are logged but never propagated: reporting should not fail the
+    workflow because the TODO file could not be updated.
+    """
+    todo_item = state.get("todo_item")
+    if not isinstance(todo_item, TodoItem):
+        return
+    todo_path = Path(app_cfg.workflow.todo_path)
+    result_text = (response.corporate_report or "").strip()
+    if len(result_text) > _TODO_RESULT_MAX_LEN:
+        result_text = result_text[:_TODO_RESULT_MAX_LEN].rstrip() + "…"
+    kind = "done" if verdict == FinalVerdict.APPROVE else "problem"
+    try:
+        mark_done(todo_path, todo_item, result_text, kind=kind)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to record TODO result for %s: %s", todo_item.task_id(), exc)
