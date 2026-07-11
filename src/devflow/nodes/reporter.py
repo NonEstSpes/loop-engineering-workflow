@@ -8,8 +8,9 @@ from typing import Any
 from devflow.config import Config
 from devflow.llm_factory import build_llm
 from devflow.mcp.factory import build_task_source
+from devflow.notifications.factory import build_notification_channels
 from devflow.schemas import ReporterResponse
-from devflow.state import FinalVerdict, Task, WorkflowError, WorkflowState
+from devflow.state import CheckerReport, FinalVerdict, Task, WorkflowError, WorkflowState
 from devflow.utils.structured_llm import call_structured
 
 logger = logging.getLogger(__name__)
@@ -58,19 +59,23 @@ Checker reports:
 
         response = call_structured(llm, agent_cfg.system_prompt, user_prompt, ReporterResponse)
 
-        # Publish to configured channels
-        pr_url = None
-        report_url = None
-        for channel in app_cfg.workflow.corporate_report_channels:
-            if channel == "console":
-                logger.info("PR: %s\n%s", response.pr_title, response.pr_description)
-                report_url = "console"
-            elif channel == "github" and branch:
-                pr_url = f"https://github.example.com/pr/{branch}"
-            elif channel == "gitlab" and branch:
-                pr_url = f"https://gitlab.example.com/merge_requests/{branch}"
-            elif channel == "slack":
-                report_url = "slack://posted"
+        # Build a Markdown report to publish to notification channels.
+        report_text = _build_report_markdown(
+            task=task,
+            response=response,
+            verdict=verdict,
+            reports=reports,
+            branch=branch,
+        )
+
+        # If the workflow reached the reporter because of an error, surface it.
+        error = state.get("error")
+        if error is not None:
+            _publish_to_channels(app_cfg, _build_error_markdown(task, error))
+
+        # Publish to configured channels.
+        pr_url = _placeholder_pr_url(app_cfg, branch)
+        report_url = _publish_to_channels(app_cfg, report_text)
 
         # Update task status in the source tracker if supported.
         updated_task = _update_task_status(app_cfg, task, verdict)
@@ -133,3 +138,85 @@ def _update_task_status(
     except Exception as exc:
         logger.warning("Failed to update task status: %s", exc)
         return task
+
+
+def _build_report_markdown(
+    *,
+    task: Task,
+    response: ReporterResponse,
+    verdict: FinalVerdict | None,
+    reports: list[CheckerReport],
+    branch: str | None,
+) -> str:
+    """Compose the Markdown report published to notification channels."""
+    lines = [
+        f"*Workflow report: {task.title}*",
+        "",
+        f"Task: `{task.id}`",
+        f"Branch: `{branch or '-'}`",
+        f"Verdict: *{verdict.value if verdict else 'unknown'}*",
+        "",
+        f"*PR:* {response.pr_title}",
+        response.pr_description,
+        "",
+    ]
+    if reports:
+        lines.append("*Checker reports:*")
+        for report in reports:
+            icon = "✅" if report.verdict.value == "approve" else "⚠️"
+            lines.append(f"{icon} {report.agent_name}: {report.summary}")
+        lines.append("")
+    lines.append(f"```\n{response.corporate_report}\n```")
+    return "\n".join(lines)
+
+
+def _build_error_markdown(task: Task, error: WorkflowError) -> str:
+    """Compose a Markdown error notification."""
+    return (
+        f"⚠️ *Workflow error on task {task.id}*\n"
+        f"*{task.title}*\n\n"
+        f"Node: `{error.node}`\n"
+        f"Error: {error.message}"
+    )
+
+
+def _publish_to_channels(app_cfg: Config, message: str) -> str | None:
+    """Publish ``message`` to all configured notification channels.
+
+    Returns the URL/id of the last successfully reporting channel (preferring
+    non-console channels), or ``None`` if nothing was published. Individual
+    channel failures are logged but do not abort the others.
+    """
+    channels = build_notification_channels(app_cfg.workflow)
+    last_url: str | None = None
+    for channel in channels:
+        try:
+            url = channel.send(message, parse_mode="Markdown")
+            # Prefer a real channel URL over the console placeholder.
+            if url != "console" or last_url is None:
+                last_url = url
+        except Exception as exc:
+            logger.warning("Notification channel '%s' failed: %s", channel.name, exc)
+        finally:
+            try:
+                channel.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Channel '%s' close failed: %s", channel.name, exc)
+    return last_url
+
+
+def _placeholder_pr_url(app_cfg: Config, branch: str | None) -> str | None:
+    """Return a placeholder PR URL for stub channels (github/gitlab).
+
+    Real forge integrations are not implemented; this preserves the previous
+    behaviour where a synthetic URL was produced so downstream code and logs
+    still reference the branch.
+    """
+    if not branch:
+        return None
+    channels = app_cfg.workflow.corporate_report_channels
+    if "github" in channels:
+        return f"https://github.example.com/pr/{branch}"
+    if "gitlab" in channels:
+        return f"https://gitlab.example.com/merge_requests/{branch}"
+    return None
