@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,9 +16,10 @@ from rich.console import Console
 from rich.table import Table
 
 from devflow.config import Config, load_config
-from devflow.graph import build_graph, run_workflow
+from devflow.graph import build_graph, run_workflow, run_workflow_interactive
 from devflow.mcp.base import TaskSource
 from devflow.mcp.factory import build_task_source
+from devflow.schemas import Plan
 from devflow.state import CheckerVerdict, FinalVerdict, Task, WorkflowError, WorkflowState
 from devflow.utils.tracing import configure_tracing
 from devflow.visualization import draw_enhanced_mermaid
@@ -48,6 +50,66 @@ def _handle_errors(func: Any) -> Any:
             raise typer.Exit(1) from exc
 
     return wrapper
+
+
+def _telegram_enabled(app_cfg: Config, no_telegram: bool) -> bool:
+    """Return True when Telegram human-in-the-loop should be used.
+
+    Requires ``human_in_the_loop`` enabled, the user not opting out via
+    ``--no-telegram``, both ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_CHAT_ID`` set
+    in the environment, and the optional ``httpx`` package installed.
+    """
+    if no_telegram or not app_cfg.workflow.human_in_the_loop:
+        return False
+    if not (os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")):
+        return False
+    try:
+        import httpx  # noqa: F401
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "Telegram credentials are set, but the optional 'httpx' package is "
+            "not installed; falling back to non-interactive mode. Install it "
+            "with `pip install -e '.[telegram]'`."
+        )
+        return False
+    return True
+
+
+def _build_telegram_approval_callback(channel: Any) -> Any:
+    """Build an approval callback that drives plan approval via Telegram.
+
+    The returned callable matches the signature expected by
+    :func:`devflow.graph.run_workflow_interactive`: ``(payload, state) -> dict``.
+    """
+    from devflow.telegram_bridge import TelegramBridge
+
+    bridge = TelegramBridge(channel)
+
+    def _callback(payload: dict[str, Any], state: WorkflowState) -> dict[str, Any]:
+        task = state.get("task")
+        plan = state.get("plan")
+        if task is None or plan is None:
+            # Fall back to auto-approve if the expected state is missing.
+            return {"approved": True, "reason": "No task/plan in state", "requested_changes": []}
+        console.print(
+            "[yellow]Plan approval required — waiting for your decision in Telegram...[/yellow]"
+        )
+        if not isinstance(plan, Plan):
+            return {"approved": True, "reason": "Plan type unexpected", "requested_changes": []}
+        task_obj = task if isinstance(task, Task) else Task(id=str(task), title="", description="")
+        return bridge.request_plan_approval(task_obj, plan)
+
+    return _callback
+
+
+def _build_telegram_channel() -> Any:
+    """Construct a TelegramChannel from env vars (httpx must be installed)."""
+    from devflow.notifications.telegram import TelegramChannel
+
+    return TelegramChannel({
+        "bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        "chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+    })
 
 
 @app.callback()
@@ -92,18 +154,36 @@ def run(
     thread_id: str | None = typer.Option(
         None, "--thread-id", help="LangGraph thread ID for persistence"
     ),
+    no_telegram: bool = typer.Option(
+        False, "--no-telegram", help="Disable Telegram human-in-the-loop approvals"
+    ),
 ) -> None:
     """Run the workflow for a single task."""
     app_cfg: Config = ctx.obj["config"]
     task_source = build_task_source(app_cfg.workflow)
     try:
-        final_state = run_workflow(
-            app_cfg=app_cfg,
-            repo_path=repo_path,
-            task_id=task_id,
-            task_source=task_source,
-            thread_id=thread_id,
-        )
+        if _telegram_enabled(app_cfg, no_telegram):
+            channel = _build_telegram_channel()
+            try:
+                approval_callback = _build_telegram_approval_callback(channel)
+                final_state = run_workflow_interactive(
+                    app_cfg=app_cfg,
+                    repo_path=repo_path,
+                    task_id=task_id,
+                    task_source=task_source,
+                    thread_id=thread_id,
+                    approval_callback=approval_callback,
+                )
+            finally:
+                channel.close()
+        else:
+            final_state = run_workflow(
+                app_cfg=app_cfg,
+                repo_path=repo_path,
+                task_id=task_id,
+                task_source=task_source,
+                thread_id=thread_id,
+            )
         _print_final_state(final_state)
     finally:
         task_source.close()
@@ -119,10 +199,17 @@ def run_all(
     limit: int = typer.Option(
         10, "--limit", "-l", help="Maximum number of open tasks to process"
     ),
+    no_telegram: bool = typer.Option(
+        False, "--no-telegram", help="Disable Telegram human-in-the-loop approvals"
+    ),
 ) -> None:
     """Run the workflow for all open tasks."""
     app_cfg: Config = ctx.obj["config"]
     task_source = build_task_source(app_cfg.workflow)
+    use_telegram = _telegram_enabled(app_cfg, no_telegram)
+    channel = None
+    if use_telegram:
+        channel = _build_telegram_channel()
     try:
         tasks = task_source.fetch_tasks(status="open", limit=limit)
         if not tasks:
@@ -132,15 +219,28 @@ def run_all(
         console.print(f"Processing {len(tasks)} open task(s)...")
         for task in tasks:
             console.print(f"\n[bold]Task {task.id}:[/bold] {task.title}")
-            final_state = run_workflow(
-                app_cfg=app_cfg,
-                repo_path=repo_path,
-                task_source=task_source,
-                task_id=task.id,
-                thread_id=task.id,
-            )
+            if use_telegram and channel is not None:
+                approval_callback = _build_telegram_approval_callback(channel)
+                final_state = run_workflow_interactive(
+                    app_cfg=app_cfg,
+                    repo_path=repo_path,
+                    task_source=task_source,
+                    task_id=task.id,
+                    thread_id=task.id,
+                    approval_callback=approval_callback,
+                )
+            else:
+                final_state = run_workflow(
+                    app_cfg=app_cfg,
+                    repo_path=repo_path,
+                    task_source=task_source,
+                    task_id=task.id,
+                    thread_id=task.id,
+                )
             _print_final_state(final_state)
     finally:
+        if channel is not None:
+            channel.close()
         task_source.close()
 
 

@@ -134,6 +134,8 @@ New drivers can be added under `src/devflow/research/sources/` and registered in
 
 Plan approval and research both use LangGraph's `interrupt()`. When the graph hits the `plan_approval` or `research` node it pauses and stores the interrupt payload. Resume by calling `graph.invoke(..., config)` with a `Command(resume=...)` value.
 
+The interactive runner `run_workflow_interactive()` (in `src/devflow/graph.py`) is the resume consumer: it detects the pending interrupt, invokes an `approval_callback` to obtain a resume value, and continues the graph. The CLI `run`/`run-all` commands wire this callback to the Telegram bridge (see [Notifications](#notifications)) when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set and `human_in_the_loop` is enabled.
+
 Example resume for plan approval:
 
 ```python
@@ -150,8 +152,30 @@ Example resume for research clarification:
 "Refined research query"
 ```
 
+## Notifications
+
+Final reports and errors are published to pluggable notification channels via
+the `NotificationChannel` ABC + factory (mirroring the `TaskSource` plug-in
+pattern). Built-in channels live under `src/devflow/notifications/`:
+
+| Channel | Description |
+|---------|-------------|
+| `console` | Logs the Markdown report via the standard logger. |
+| `telegram` | Sends the report (and interactive approvals) via the Telegram Bot API. |
+| `github` / `gitlab` / `slack` / `teams` | Recognised stubs — skipped with a warning until implemented. |
+
+The reporter node builds a Markdown summary and publishes it to every channel
+listed in `corporate_report_channels` (`config/workflow.yaml`). If the workflow
+reached the reporter due to an error, an error notification is published first.
+
+The Telegram channel (`src/devflow/notifications/telegram.py`) also exposes
+interactive helpers (inline keyboards, callback-query and text-reply long
+polling) used by `src/devflow/telegram_bridge.py` to drive plan approval
+through a chat: the bot sends the plan with ✅/❌/✏️ buttons and collects the
+human decision.
+
 ## Persistence
 
 `build_graph()` uses `langgraph.checkpoint.memory.InMemorySaver` by default.
-Pass a custom `checkpointer` (for example, a SQLite or Postgres saver) to
+Pass a custom checkpointer (for example, a SQLite or Postgres saver) to
 enable resumption across process restarts.

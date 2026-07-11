@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 from functools import partial
 from typing import Any, cast
 
@@ -11,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Send
+from langgraph.types import Command, Send
 
 from devflow.config import Config
 from devflow.mcp.base import TaskSource
@@ -220,3 +221,79 @@ def run_workflow(
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
     }
     return cast(WorkflowState, graph.invoke(initial_state or {}, config))
+
+
+#: Type of the human-approval callback used by ``run_workflow_interactive``.
+#:
+#: Receives the interrupt payload and the current workflow state, and must
+#: return the resume value expected by the paused node (e.g. a dict
+#: ``{"approved": bool, "reason": str, "requested_changes": list[str]}`` for
+#: plan approval).
+ApprovalCallback = Callable[[dict[str, Any], WorkflowState], dict[str, Any]]
+
+
+def run_workflow_interactive(
+    app_cfg: Config,
+    repo_path: str | None = None,
+    task_id: str | None = None,
+    task_source: TaskSource | None = None,
+    initial_state: WorkflowState | None = None,
+    thread_id: str | None = None,
+    approval_callback: ApprovalCallback | None = None,
+    *,
+    max_resumptions: int = 50,
+) -> WorkflowState:
+    """Run the workflow, resuming from ``interrupt()`` pauses via a callback.
+
+    Unlike :func:`run_workflow`, this runner detects when the graph pauses on an
+    ``interrupt()`` (currently plan approval), asks the ``approval_callback`` to
+    produce a resume value, and continues execution. This is the consumer side
+    of the human-in-the-loop gate that ``plan_approval`` raises.
+
+    The graph is built with the default :class:`InMemorySaver` checkpointer and
+    a stable ``thread_id`` so the paused state survives between ``invoke``
+    calls within a single process.
+
+    The callback signature is ``(payload, state) -> resume_value`` where
+    ``payload`` is the dict passed to ``interrupt()``. If ``approval_callback``
+    is ``None`` or the interrupt payload is not recognised, the current state is
+    returned immediately (the graph stays paused).
+    """
+    graph = build_graph(
+        app_cfg=app_cfg,
+        repo_path=repo_path,
+        task_source=task_source,
+        task_id=task_id,
+    )
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
+    }
+
+    # Initial run: proceeds until END or the first interrupt.
+    result = cast(WorkflowState, graph.invoke(initial_state or {}, config))
+
+    for _ in range(max_resumptions):
+        snapshot = graph.get_state(config)
+        # No pending tasks -> the graph reached END.
+        if snapshot is None or not snapshot.next:
+            break
+
+        interrupts = snapshot.interrupts
+        if not interrupts:
+            # Paused for a reason other than interrupt; nothing we can resume.
+            logger.warning("Graph paused without an interrupt; returning current state")
+            break
+
+        interrupt_obj = interrupts[0]
+        payload = interrupt_obj.value
+        logger.info("Workflow paused on interrupt; payload keys: %s", list(payload))
+
+        if approval_callback is None:
+            logger.info("No approval callback; returning paused state")
+            break
+
+        resume_value = approval_callback(payload, result)
+        logger.info("Resuming workflow with human decision")
+        result = cast(WorkflowState, graph.invoke(Command(resume=resume_value), config))
+
+    return result

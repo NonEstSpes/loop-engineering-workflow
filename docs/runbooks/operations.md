@@ -79,8 +79,11 @@ cp .env.example .env
 | `JIRA_API_TOKEN` | Jira source | API token. |
 | `GITHUB_TOKEN` | GitHub | Used by future forge integrations / research tools. |
 | `GITLAB_TOKEN` | GitLab | Used by future forge integrations / research tools. |
-| `SLACK_WEBHOOK_URL` | Notifications | Corporate report channel. |
-| `TEAMS_WEBHOOK_URL` | Notifications | Corporate report channel. |
+| `SLACK_WEBHOOK_URL` | Notifications | Corporate report channel (not yet implemented). |
+| `TEAMS_WEBHOOK_URL` | Notifications | Corporate report channel (not yet implemented). |
+| `TELEGRAM_BOT_TOKEN` | Telegram | Bot API token from @BotFather. Enables Telegram notifications + approvals. |
+| `TELEGRAM_CHAT_ID` | Telegram | Target chat id (user or group) for notifications and approvals. |
+| `TELEGRAM_API_BASE` | Telegram | Optional Bot API base URL override (e.g. a local Bot API server). |
 | `WEB_SEARCH_API_KEY` | Web search | Optional; default engine is DuckDuckGo. |
 
 Additional operational overrides:
@@ -131,7 +134,7 @@ human_in_the_loop: true
 default_branch: main
 pr_target_branch: main
 corporate_report_channels:
-  - console                # also supported: github, gitlab, slack
+  - console                # also supported: telegram, github, gitlab, slack
 ```
 
 | Key | Description |
@@ -142,6 +145,58 @@ corporate_report_channels:
 | `default_branch` | Base branch for new worktrees and diffs. |
 | `pr_target_branch` | Target branch for generated PR descriptions. |
 | `corporate_report_channels` | Where the reporter publishes results. |
+
+### Telegram integration
+
+Telegram serves two roles in DevFlow: a **notification channel** for final
+reports and errors, and an **interactive human-in-the-loop** bridge for plan
+approval. Both are opt-in and driven by environment variables.
+
+**Setup**
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
+2. Find your chat id: send any message to the bot, then inspect
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` — the numeric `chat.id`
+   appears in the response. For groups, add the bot to the group first.
+3. Set the environment variables:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHAT_ID=987654321
+# Optional: a local Bot API server
+# TELEGRAM_API_BASE=http://localhost:8081
+```
+
+4. Add `telegram` to `corporate_report_channels` in `config/workflow.yaml`:
+
+```yaml
+corporate_report_channels:
+  - console
+  - telegram
+```
+
+**Notifications**
+
+When the reporter node runs, it publishes a Markdown summary (task, verdict,
+checker reports, corporate report) to every configured channel. If the workflow
+reached the reporter because of an error, an error notification is published
+first. Telegram failures are logged as warnings but never abort the workflow.
+
+**Human-in-the-loop approvals**
+
+When `human_in_the_loop: true` and both `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` are set, the `run` and `run-all` commands use an interactive
+runner: when the graph pauses at `plan_approval`, the bot sends the plan to the
+chat with three inline buttons — ✅ Одобрить / ❌ Отклонить / ✏️ Запросить
+изменения. On reject or changes, the bot prompts for a free-form text reply
+(reason or list of changes). The workflow resumes automatically once the human
+responds.
+
+Pass `--no-telegram` to `run`/`run-all` to disable the Telegram bridge and fall
+back to the non-interactive runner (the graph will simply pause at the
+interrupt). Corporate proxy and CA-bundle environment variables
+(`HTTP_PROXY`/`HTTPS_PROXY`/`SSL_CERT_FILE`) are honoured by the Telegram
+client automatically.
 
 ### Research sources: `config/research_sources.yaml`
 
