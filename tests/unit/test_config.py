@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from devflow.config import load_config, load_providers
 
 
@@ -66,3 +68,58 @@ def test_load_providers_supports_legacy_flat_format(temp_dir: Path) -> None:
     providers = load_providers(temp_dir / "providers.yaml")
     assert providers["kimi"].name == "kimi"
     assert providers["kimi"].api_key == "fake-key"
+
+
+def test_workflow_config_has_daemon_defaults() -> None:
+    """WorkflowConfig gets sensible daemon defaults when not specified."""
+    from devflow.config import WorkflowConfig
+
+    cfg = WorkflowConfig(task_source="mock")
+    assert cfg.daemon.enabled is False
+    assert cfg.daemon.task_schedule == "0 9,15 * * 1-5"
+    assert cfg.daemon.eod_schedule == "0 18 * * 1-5"
+    assert cfg.daemon.port == 8787
+    assert cfg.daemon.approval_timeout_hours == 8
+    assert cfg.daemon.approval_on_timeout == "defer"
+    assert cfg.hitl_strategy == "per_plan"
+
+
+def test_daemon_config_from_yaml(tmp_path: Path) -> None:
+    """Daemon config loads from YAML with env interpolation."""
+    from devflow.config import load_workflow_config
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "task_source: mock\n"
+        "hitl_strategy: full_detail\n"
+        "daemon:\n"
+        "  enabled: true\n"
+        "  task_schedule: '0 10 * * 1-5'\n"
+        "  eod_schedule: '0 19 * * 1-5'\n"
+        "  port: 9000\n"
+        "  approval_timeout_hours: 4\n"
+        "  approval_on_timeout: reject\n",
+        encoding="utf-8",
+    )
+    cfg = load_workflow_config(yaml_path)
+    assert cfg.daemon.enabled is True
+    assert cfg.daemon.task_schedule == "0 10 * * 1-5"
+    assert cfg.daemon.port == 9000
+    assert cfg.daemon.approval_timeout_hours == 4
+    assert cfg.daemon.approval_on_timeout == "reject"
+    assert cfg.hitl_strategy == "full_detail"
+
+
+def test_hitl_strategy_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEVFLOW_HITL_STRATEGY env var overrides the YAML value."""
+    from devflow.config import load_workflow_config
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "task_source: mock\nhitl_strategy: per_plan\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("DEVFLOW_HITL_STRATEGY", "end_of_day")
+    cfg = load_workflow_config(yaml_path)
+    assert cfg.hitl_strategy == "end_of_day"

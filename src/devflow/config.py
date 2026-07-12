@@ -52,6 +52,32 @@ class WorkflowConfig(BaseModel):
     # and the reporter writes completion results back to. May be overridden by
     # the --todo-path CLI flag or the DEVFLOW_TODO_PATH env variable.
     todo_path: str = "TODO.md"
+    # Human-in-the-loop cadence for the daemon: per_plan (each plan), full_detail
+    # (each step), or end_of_day (batch at EOD). See HitlStrategy for valid values.
+    # May be overridden by the DEVFLOW_HITL_STRATEGY env variable.
+    hitl_strategy: str = "per_plan"
+    daemon: DaemonConfig = Field(default_factory=lambda: DaemonConfig())
+
+
+class HitlStrategy:
+    """Constants for human-in-the-loop strategy values."""
+
+    PER_PLAN = "per_plan"
+    FULL_DETAIL = "full_detail"
+    END_OF_DAY = "end_of_day"
+
+    ALL = frozenset({PER_PLAN, FULL_DETAIL, END_OF_DAY})
+
+
+class DaemonConfig(BaseModel):
+    """Configuration for the long-running daemon service."""
+
+    enabled: bool = False
+    task_schedule: str = "0 9,15 * * 1-5"
+    eod_schedule: str = "0 18 * * 1-5"
+    port: int = 8787
+    approval_timeout_hours: int = 8
+    approval_on_timeout: str = "defer"  # defer | reject
 
 
 class ResearchSourceConfig(BaseModel):
@@ -175,6 +201,14 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
     todo_override = os.getenv("DEVFLOW_TODO_PATH")
     if todo_override:
         raw["todo_path"] = todo_override
+    hitl_override = os.getenv("DEVFLOW_HITL_STRATEGY")
+    if hitl_override:
+        if hitl_override not in HitlStrategy.ALL:
+            raise ValueError(
+                f"DEVFLOW_HITL_STRATEGY must be one of {sorted(HitlStrategy.ALL)}, "
+                f"got {hitl_override!r}"
+            )
+        raw["hitl_strategy"] = hitl_override
     try:
         return WorkflowConfig.model_validate(raw)
     except ValidationError as exc:

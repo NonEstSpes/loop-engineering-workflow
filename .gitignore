@@ -21,3 +21,7 @@ __pycache__/
 # The format is documented in README.md; each user keeps their own copy.
 # Anchored to repo root so docs/examples TODO files are not accidentally ignored.
 /TODO.md
+
+# Daemon runtime artifacts
+.devflow/
+logs/
