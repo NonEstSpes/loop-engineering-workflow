@@ -22,6 +22,7 @@ from devflow.nodes.maker import maker_node
 from devflow.nodes.orchestrator import orchestrator_node
 from devflow.nodes.plan_approval import plan_approval_node
 from devflow.nodes.planner import planner_node
+from devflow.nodes.publish_approval import publish_approval_node
 from devflow.nodes.reporter import reporter_node
 from devflow.nodes.research import research_node
 from devflow.nodes.self_review import self_review_node
@@ -95,6 +96,10 @@ def build_graph(
         partial(aggregate_checker_node, app_cfg=app_cfg),
     )
     graph.add_node(
+        "publish_approval",
+        partial(publish_approval_node, app_cfg=app_cfg),
+    )
+    graph.add_node(
         "reporter",
         partial(reporter_node, app_cfg=app_cfg),
     )
@@ -129,7 +134,11 @@ def build_graph(
     graph.add_conditional_edges(
         "aggregate_checker",
         partial(_after_aggregate_checker, app_cfg=app_cfg),
-        {"maker": "maker", "reporter": "reporter"},
+        {
+            "maker": "maker",
+            "publish_approval": "publish_approval",
+            "reporter": "reporter",
+        },
     )
     graph.add_conditional_edges(
         "research",
@@ -141,6 +150,8 @@ def build_graph(
             "run_checker": "run_checker",
         },
     )
+    # publish_approval -> reporter (the gate always proceeds to reporter after the decision)
+    graph.add_edge("publish_approval", "reporter")
     graph.add_edge("reporter", END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -192,7 +203,7 @@ def _after_self_review(state: WorkflowState) -> list[Send] | str:
 
 
 def _after_aggregate_checker(state: WorkflowState, *, app_cfg: Config) -> str:
-    """Route after checker aggregation: maker for rework, reporter otherwise."""
+    """Route after checker aggregation: maker for rework, publish_approval or reporter."""
     if state.get("error"):
         logger.info("Routing aggregate_checker -> reporter due to error")
         return "reporter"
@@ -202,7 +213,7 @@ def _after_aggregate_checker(state: WorkflowState, *, app_cfg: Config) -> str:
     max_rework = app_cfg.workflow.max_rework_iterations
 
     if verdict == FinalVerdict.APPROVE:
-        return "reporter"
+        return "publish_approval"
 
     if verdict in {FinalVerdict.REJECT, FinalVerdict.CONDITIONAL}:
         if rework_count < max_rework:
