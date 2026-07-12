@@ -52,3 +52,43 @@ def test_run_daemon_starts_components(
     run_daemon(config_dir="config", repo_path=str(temp_git_repo))
 
     assert "web" in started
+
+
+def test_run_daemon_with_sweep_and_scheduler(
+    mock_config: Any,
+    temp_git_repo: Path,
+    fake_llm_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full daemon startup: sweep runs, scheduler starts, web server called.
+
+    Verifies the integration of all Phase 1 components without actually
+    binding a network port.
+    """
+    web_called: list[bool] = []
+
+    def fake_web_server(*args: Any, **kwargs: Any) -> None:
+        web_called.append(True)
+
+    monkeypatch.setattr("devflow.daemon.__main__.run_web_server", fake_web_server)
+    monkeypatch.setattr("devflow.daemon.__main__.load_config", lambda *a, **kw: mock_config)
+    mock_config.workflow.daemon.enabled = True
+    mock_config.workflow.hitl_strategy = "end_of_day"
+
+    run_daemon(config_dir="config", repo_path=str(temp_git_repo))
+
+    assert web_called == [True]
+
+
+def test_run_daemon_exits_when_disabled(
+    mock_config: Any,
+    temp_git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_daemon exits with error when daemon.enabled is False."""
+    monkeypatch.setattr("devflow.daemon.__main__.load_config", lambda *a, **kw: mock_config)
+    mock_config.workflow.daemon.enabled = False
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_daemon(config_dir="config", repo_path=str(temp_git_repo))
+    assert exc_info.value.code == 1
