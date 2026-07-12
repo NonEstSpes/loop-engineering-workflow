@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from devflow.daemon.approval_bridge import ApprovalBridge
 from devflow.daemon.approval_store import ApprovalStore

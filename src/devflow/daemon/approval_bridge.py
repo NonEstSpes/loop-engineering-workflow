@@ -14,7 +14,8 @@ The ``task_id`` from the interrupt payload is used as the store key
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from devflow.daemon.approval_store import ApprovalStore
 from devflow.notifications.base import NotificationChannel
