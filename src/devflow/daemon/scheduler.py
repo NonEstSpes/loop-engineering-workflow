@@ -50,7 +50,13 @@ class DaemonScheduler:
             logger.info("Scheduler started")
 
     def shutdown(self) -> None:
-        """Shut down the scheduler, waiting for active jobs to finish."""
+        """Shut down the scheduler WITHOUT waiting for active jobs to finish.
+
+        Uses ``wait=False`` so the daemon exits promptly on stop/restart.
+        In-flight workflow runs are abandoned (consistent with the spec's
+        "accept loss" policy for InMemory state); the startup sweep cleans
+        any orphaned worktrees on the next start.
+        """
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
             logger.info("Scheduler stopped")
@@ -98,6 +104,9 @@ class DaemonScheduler:
     def _run_all_wrapper(self, repo_path: str) -> None:
         """Job handler: run all open tasks. Catches exceptions so APScheduler
         doesn't kill the scheduler on a single failure."""
+        # TODO(Phase 4): acquire locks.task_run() around run_all so that
+        # task runs and EOD-publish cannot execute simultaneously.
+        # Phase 1 relies on APScheduler max_instances=1 per job.
         try:
             logger.info("task_run job triggered")
             self._runner.run_all(repo_path=repo_path)

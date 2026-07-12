@@ -58,18 +58,27 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     scheduler.register_jobs(repo_path)
 
     # 5. Graceful shutdown handler.
+    # Uvicorn installs its own SIGINT/SIGTERM handlers that shadow these,
+    # so this is a best-effort bonus. The reliable cleanup path is the
+    # try/finally around run_web_server below.
     def _shutdown(signum: int, frame: object) -> None:
-        logger.info("Received signal %s, shutting down...", signum)
+        logger.info("Received signal %s; uvicorn will exit and the finally block will clean up.", signum)
         scheduler.shutdown()
-        logger.info("Daemon stopped.")
-        sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    # 6. Start web server (blocking).
+    # 6. Start web server (blocking). Wrapped in try/finally so the scheduler
+    # is always shut down when uvicorn returns (uvicorn installs its own
+    # SIGINT/SIGTERM handlers that shadow ours, so the signal handler above
+    # is a best-effort bonus, not the primary shutdown path).
     logger.info("Starting web server on 127.0.0.1:%d", daemon_cfg.port)
-    run_web_server(app_cfg, locks, event_bus, runner)
+    try:
+        run_web_server(app_cfg, locks, event_bus, runner)
+    finally:
+        logger.info("Web server stopped; shutting down scheduler...")
+        scheduler.shutdown()
+        logger.info("Daemon stopped.")
 
 
 def main() -> None:

@@ -12,6 +12,7 @@ directories are touched — other worktrees are preserved.
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
 from git import Repo
@@ -63,8 +64,6 @@ def _remove_orphan(repo: Repo, orphan_dir: Path) -> None:
     except Exception as exc:
         logger.warning("Failed to git-remove worktree %s: %s; deleting dir", orphan_dir, exc)
         # Fall back to manual directory removal if git worktree remove fails
-        import shutil
-
         shutil.rmtree(orphan_dir, ignore_errors=True)
 
     # Find and delete the associated branch (devflow/{task_id}/{uuid}).

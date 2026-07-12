@@ -85,6 +85,8 @@ def test_run_all_processes_multiple_tasks(
     locks = DaemonLocks()
     runner = WorkflowRunner(mock_config, bus, locks, task_source=MockTaskSource({}))
     results = runner.run_all(repo_path=str(temp_git_repo), limit=3)
-    # MockTaskSource returns 0 tasks by default, so results should be empty.
-    # The point is that run_all doesn't crash.
+    # MockTaskSource seeds MOCK-1 and MOCK-2; both should complete.
     assert isinstance(results, list)
+    assert len(results) == 2
+    for state in results:
+        assert state.get("final_verdict") is not None

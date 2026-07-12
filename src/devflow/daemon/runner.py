@@ -58,6 +58,9 @@ class WorkflowRunner:
         :attr:`locks` for the scheduler/orchestrator to acquire around the
         call (Phase 4); this method itself stays synchronous.
         """
+        # TODO(Phase 4): acquire locks.task_run() around the graph.invoke call
+        # so task runs coordinate with EOD-publish. Phase 1 ships the lock
+        # unused; max_instances=1 on the APScheduler job is the only guard.
         topic = f"task.{task_id}"
 
         self._publish(
@@ -129,22 +132,22 @@ class WorkflowRunner:
                 source.close()
 
     def _publish(self, topic: str, data: dict[str, Any]) -> None:
-        """Publish an event to the bus, tracking count for diagnostics.
+        """Publish an event, tracking count for diagnostics.
 
-        Safe to call from synchronous code (no running loop) and from within
-        a running loop. A failure to publish must never break the workflow
-        run — events are best-effort telemetry.
+        Best-effort: a publish failure is logged but never propagated, so
+        telemetry cannot break a workflow run. When called from the
+        APScheduler thread (no running event loop), a temporary loop is
+        created via asyncio.run(). When called from within a running loop
+        (Phase 2+ UI triggers), the publish is scheduled as a task.
         """
         self.events_published += 1
         try:
+            loop = asyncio.get_running_loop()
+            # We are inside a running loop — schedule without blocking.
+            loop.create_task(self._bus.publish(topic, data))
+        except RuntimeError:
+            # No running loop (APScheduler thread) — create one for the call.
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None and loop.is_running():
-                loop.create_task(self._bus.publish(topic, data))
-            else:
                 asyncio.run(self._bus.publish(topic, data))
-        except Exception:
-            logger.warning("Failed to publish event to topic '%s'", topic, exc_info=True)
+            except Exception as exc:
+                logger.debug("EventBus publish failed for '%s': %s", topic, exc)
