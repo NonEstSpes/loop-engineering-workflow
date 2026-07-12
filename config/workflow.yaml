@@ -10,3 +10,16 @@ corporate_report_channels:
 # #r0..#r5 priority) and the reporter writes the result back into the same line.
 # Override per-run with --todo-path or the DEVFLOW_TODO_PATH env variable.
 todo_path: TODO.md
+
+# HITL strategy: per_plan | full_detail | end_of_day
+hitl_strategy: per_plan
+
+# Daemon configuration (for autonomous scheduled runs)
+daemon:
+  enabled: false
+  # Cron schedules (standard 5-field cron: minute hour day month day-of-week)
+  task_schedule: "0 9,15 * * 1-5"   # weekdays 09:00 and 15:00
+  eod_schedule: "0 18 * * 1-5"      # weekdays 18:00 (only in end_of_day mode)
+  port: 8787                         # dashboard API port (localhost only)
+  approval_timeout_hours: 8          # max time to wait for human approval
+  approval_on_timeout: defer         # defer | reject
