@@ -140,6 +140,7 @@ class WorkflowState(TypedDict, total=False):
     todo_item: TodoItem | None
     plan: Plan | None
     plan_approved: bool | None
+    publish_approved: bool | None
     worktree_path: str | None
     branch_name: str | None
     diff: str | None
