@@ -20,13 +20,16 @@ from typing import Any
 from devflow.config import WorkflowConfig
 from devflow.notifications.base import NotificationChannel
 from devflow.notifications.console import ConsoleChannel
+from devflow.notifications.email_channel import EmailChannel
 
 logger = logging.getLogger(__name__)
 
 # Only the always-available channels are eagerly imported. Telegram is imported
-# lazily because it pulls in the optional ``httpx`` dependency.
+# lazily because it pulls in the optional ``httpx`` dependency. email uses only
+# stdlib (smtplib) so it is eagerly imported alongside console.
 _NOTIFICATION_REGISTRY: dict[str, type[NotificationChannel]] = {
     "console": ConsoleChannel,
+    "email": EmailChannel,
 }
 
 # Channels that are recognised in config but not yet implemented as real
@@ -147,6 +150,26 @@ def build_notification_channels(
                 ),
                 "token": os.getenv(
                     "NTFY_TOKEN", ntfy_extra.get("token", "")
+                ),
+            }
+        elif name == "email":
+            email_extra = extra.get("email", {})
+            config = {
+                "smtp_host": os.getenv(
+                    "SMTP_HOST", email_extra.get("smtp_host", "")
+                ),
+                "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+                "smtp_user": os.getenv(
+                    "SMTP_USER", email_extra.get("smtp_user", "")
+                ),
+                "smtp_password": os.getenv(
+                    "SMTP_PASSWORD", email_extra.get("smtp_password", "")
+                ),
+                "from_addr": os.getenv(
+                    "EMAIL_FROM", email_extra.get("from_addr", "")
+                ),
+                "to_addr": os.getenv(
+                    "EMAIL_TO", email_extra.get("to_addr", "")
                 ),
             }
         else:
