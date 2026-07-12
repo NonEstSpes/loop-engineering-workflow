@@ -7,7 +7,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
-from devflow.config import Config
+from devflow.config import Config, HitlStrategy
 from devflow.state import WorkflowError, WorkflowState
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,16 @@ def plan_approval_node(state: WorkflowState, *, app_cfg: Config) -> dict[str, An
             "logs": ["plan_approval: error - agent config not found"],
         }
 
-    # Auto-approval when configured
-    if not app_cfg.workflow.human_in_the_loop or agent_cfg.auto_approve:
+    # Auto-approval when configured. When the hitl_strategy defers human review
+    # to the publish gate (full_detail) or removes per-task review entirely
+    # (end_of_day), the plan is auto-approved here and per_plan keeps the
+    # interrupt path.
+    strategy = app_cfg.workflow.hitl_strategy
+    if (
+        not app_cfg.workflow.human_in_the_loop
+        or agent_cfg.auto_approve
+        or strategy in {HitlStrategy.FULL_DETAIL, HitlStrategy.END_OF_DAY}
+    ):
         logger.info("Auto-approved plan for task %s", task.id)
         return {
             "plan_approved": True,
