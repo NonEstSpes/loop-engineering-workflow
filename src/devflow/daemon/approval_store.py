@@ -56,7 +56,8 @@ class ApprovalStore:
             entry.event.set()
             # Remove from pending immediately so get_pending() reflects the change.
             del self._pending[thread_id]
-        logger.info("Resolved approval for thread %s: approved=%s", thread_id, decision.get("approved"))
+        approved = decision.get("approved")
+        logger.info("Resolved approval for thread %s: approved=%s", thread_id, approved)
         return True
 
     def wait(self, thread_id: str, timeout: float) -> dict[str, Any] | None:
