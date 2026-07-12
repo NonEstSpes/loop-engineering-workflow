@@ -1,0 +1,80 @@
+"""Unit tests for the daemon APScheduler configuration."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+from git import Repo
+
+from devflow.config import Config
+from devflow.daemon.events import EventBus
+from devflow.daemon.locks import DaemonLocks
+from devflow.daemon.runner import WorkflowRunner
+from devflow.daemon.scheduler import DaemonScheduler
+
+
+@pytest.fixture
+def temp_git_repo(tmp_path: Path) -> Path:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo = Repo.init(repo_path)
+    with repo.config_writer() as writer:
+        writer.set_value("user", "name", "Test")
+        writer.set_value("user", "email", "test@example.com")
+    (repo_path / "README.md").write_text("# init", encoding="utf-8")
+    repo.git.add("--all")
+    repo.index.commit("init")
+    if "main" not in repo.heads:
+        repo.create_head("main")
+    return repo_path
+
+
+def test_scheduler_starts_and_stops(mock_config: Config) -> None:
+    """DaemonScheduler starts and stops cleanly."""
+    bus = EventBus()
+    locks = DaemonLocks()
+    runner = WorkflowRunner(mock_config, bus, locks)
+    scheduler = DaemonScheduler(mock_config, runner)
+    scheduler.start()
+    assert scheduler.is_running
+    scheduler.shutdown()
+    assert not scheduler.is_running
+
+
+def test_scheduler_registers_task_job(
+    mock_config: Config,
+    temp_git_repo: Path,
+) -> None:
+    """register_jobs adds a task-run job with the configured cron schedule."""
+    bus = EventBus()
+    locks = DaemonLocks()
+    runner = WorkflowRunner(mock_config, bus, locks)
+    scheduler = DaemonScheduler(mock_config, runner)
+    scheduler.start()
+    scheduler.register_jobs(str(temp_git_repo))
+    assert scheduler.job_count >= 1
+    scheduler.shutdown()
+
+
+def test_scheduler_registers_eod_job_when_eod_mode(
+    mock_config: Config,
+    temp_git_repo: Path,
+) -> None:
+    """register_jobs adds an EOD job when hitl_strategy is end_of_day."""
+    import copy
+
+    cfg = copy.deepcopy(mock_config)
+    cfg.workflow.hitl_strategy = "end_of_day"
+    cfg.workflow.daemon.enabled = True
+
+    bus = EventBus()
+    locks = DaemonLocks()
+    runner = WorkflowRunner(cfg, bus, locks)
+    scheduler = DaemonScheduler(cfg, runner)
+    scheduler.start()
+    scheduler.register_jobs(str(temp_git_repo))
+    # In end_of_day mode, both task and eod jobs should be registered.
+    assert scheduler.job_count >= 2
+    scheduler.shutdown()
