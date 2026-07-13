@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
 
 from devflow.config import Config
+from devflow.forge.factory import build_forge_backend
 from devflow.llm_factory import build_llm
 from devflow.mcp.factory import build_task_source
 from devflow.notifications.factory import build_notification_channels
@@ -61,7 +63,7 @@ Checker reports:
 
         response = call_structured(llm, agent_cfg.system_prompt, user_prompt, ReporterResponse)
 
-        # Build a Markdown report to publish to notification channels.
+        # Build the report markdown for notification channels.
         report_text = _build_report_markdown(
             task=task,
             response=response,
@@ -70,31 +72,34 @@ Checker reports:
             branch=branch,
         )
 
-        # If the workflow reached the reporter because of an error, surface it.
+        # Surface errors via notification channels (best-effort).
         error = state.get("error")
         if error is not None:
             _publish_to_channels(app_cfg, _build_error_markdown(task, error))
 
-        # Publish to configured channels.
-        pr_url = _placeholder_pr_url(app_cfg, branch)
-        report_url = _publish_to_channels(app_cfg, report_text)
-
-        # Update task status in the source tracker if supported.
-        updated_task = _update_task_status(app_cfg, task, verdict)
-
-        # Write a short inline result into the originating TODO.md line so the
-        # backlog stays in sync without a separate report file.
-        _record_todo_result(app_cfg, state, response, verdict)
+        # Execute config-driven actions.
+        action_results = _execute_actions(
+            app_cfg=app_cfg,
+            state=state,
+            task=task,
+            response=response,
+            verdict=verdict,
+            report_text=report_text,
+            branch=branch,
+        )
 
         logger.info("Reporter finished for task %s", task.id)
         return {
-            "pr_url": pr_url,
-            "report_url": report_url,
-            "task": updated_task,
+            "pr_url": action_results.get("pr_url"),
+            "mr_url": action_results.get("mr_url"),
+            "pushed_sha": action_results.get("pushed_sha"),
+            "report_url": action_results.get("report_url"),
+            "task": action_results.get("task", task),
             "logs": [
                 f"reporter: PR '{response.pr_title}'",
                 "reporter: corporate report generated",
-            ],
+            ]
+            + action_results.get("action_logs", []),
         }
     except Exception as exc:
         logger.exception("Reporter failed")
@@ -211,21 +216,85 @@ def _publish_to_channels(app_cfg: Config, message: str) -> str | None:
     return last_url
 
 
-def _placeholder_pr_url(app_cfg: Config, branch: str | None) -> str | None:
-    """Return a placeholder PR URL for stub channels (github/gitlab).
+def _execute_actions(
+    *,
+    app_cfg: Config,
+    state: WorkflowState,
+    task: Task,
+    response: ReporterResponse,
+    verdict: FinalVerdict | None,
+    report_text: str,
+    branch: str | None,
+) -> dict[str, Any]:
+    """Execute config-driven publication actions.
 
-    Real forge integrations are not implemented; this preserves the previous
-    behaviour where a synthetic URL was produced so downstream code and logs
-    still reference the branch.
+    Each action is independent: a failure in one does not abort the others
+    (same pattern as _publish_to_channels). Returns a dict of results.
     """
-    if not branch:
-        return None
-    channels = app_cfg.workflow.corporate_report_channels
-    if "github" in channels:
-        return f"https://github.example.com/pr/{branch}"
-    if "gitlab" in channels:
-        return f"https://gitlab.example.com/merge_requests/{branch}"
-    return None
+    forge_cfg = app_cfg.workflow.forge
+    actions = forge_cfg.actions
+    results: dict[str, Any] = {"action_logs": []}
+    forge: Any = None
+
+    try:
+        forge = build_forge_backend(app_cfg.workflow)
+    except Exception as exc:
+        logger.warning("Failed to build forge backend: %s", exc)
+
+    # publish_report: send the corporate report to notification channels.
+    if "publish_report" in actions:
+        try:
+            report_url = _publish_to_channels(app_cfg, report_text)
+            results["report_url"] = report_url
+        except Exception as exc:
+            logger.warning("publish_report action failed: %s", exc)
+
+    # update_tracker: update task status in the external tracker.
+    if "update_tracker" in actions:
+        try:
+            updated_task = _update_task_status(app_cfg, task, verdict)
+            results["task"] = updated_task
+        except Exception as exc:
+            logger.warning("update_tracker action failed: %s", exc)
+
+    # record_todo: write result back into TODO.md.
+    if "record_todo" in actions:
+        try:
+            _record_todo_result(app_cfg, state, response, verdict)
+        except Exception as exc:
+            logger.warning("record_todo action failed: %s", exc)
+
+    # push: push the branch to the remote via forge backend.
+    if "push" in actions and forge is not None and branch:
+        try:
+            repo_path = state.get("worktree_path") or "."
+            sha = forge.push(branch, forge_cfg.target_branch, repo_path)
+            results["pushed_sha"] = sha
+            results["action_logs"].append(f"reporter: pushed {branch} -> {sha[:8]}")
+        except Exception as exc:
+            logger.warning("push action failed: %s", exc)
+
+    # create_mr: create a merge request via forge backend.
+    if "create_mr" in actions and forge is not None and branch:
+        try:
+            mr_info = forge.create_mr(
+                branch=branch,
+                target=forge_cfg.target_branch,
+                title=response.pr_title,
+                description=response.pr_description,
+            )
+            results["mr_url"] = mr_info.url
+            results["pr_url"] = mr_info.url  # backward compat
+            results["action_logs"].append(f"reporter: MR created {mr_info.url}")
+        except Exception as exc:
+            logger.warning("create_mr action failed: %s", exc)
+
+    # Close the forge backend if it was opened.
+    if forge is not None:
+        with contextlib.suppress(Exception):
+            forge.close()
+
+    return results
 
 
 # A short inline result is more useful in TODO.md than the full corporate

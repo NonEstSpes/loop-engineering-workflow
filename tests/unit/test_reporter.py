@@ -231,3 +231,122 @@ def test_truncates_long_report(
     # Full 1000-char blob is not dumped; truncation marker present.
     assert "x" * 1000 not in text
     assert "…" in text
+
+
+# ---------------------------------------------------------------------------
+# config-driven forge actions (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_reporter_executes_only_enabled_actions(
+    base_state: WorkflowState,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When forge.actions excludes create_mr, no MR is created."""
+    mock_config.workflow.forge.actions = ["publish_report", "update_tracker", "record_todo"]
+
+    push_called: list[bool] = []
+    mr_called: list[bool] = []
+
+    class FakeForge:
+        name = "fake"
+
+        def push(self, branch, target, repo_path):
+            push_called.append(True)
+            return "sha-fake"
+
+        def create_mr(self, branch, target, title, description):
+            mr_called.append(True)
+            from devflow.forge.base import MRInfo
+            return MRInfo(url="https://fake/mr/1", number=1)
+
+        def healthcheck(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "devflow.nodes.reporter.build_forge_backend", lambda wf: FakeForge()
+    )
+
+    result = reporter_node(base_state, app_cfg=mock_config)
+
+    # push and create_mr were NOT called (not in actions list)
+    assert push_called == []
+    assert mr_called == []
+    assert result.get("mr_url") is None
+
+
+def test_reporter_creates_mr_when_action_enabled(
+    base_state: WorkflowState,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When create_mr is in actions, the reporter creates an MR via forge."""
+    mock_config.workflow.forge.actions = ["create_mr"]
+    mock_config.workflow.forge.provider = "github"
+
+    class FakeForge:
+        name = "fake"
+
+        def push(self, branch, target, repo_path):
+            return "sha-fake"
+
+        def create_mr(self, branch, target, title, description):
+            from devflow.forge.base import MRInfo
+            return MRInfo(url="https://github.com/owner/repo/pull/1", number=1)
+
+        def healthcheck(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "devflow.nodes.reporter.build_forge_backend", lambda wf: FakeForge()
+    )
+
+    result = reporter_node(base_state, app_cfg=mock_config)
+
+    assert result.get("mr_url") == "https://github.com/owner/repo/pull/1"
+    assert result.get("pr_url") is not None or result.get("mr_url") is not None
+
+
+def test_reporter_pushes_when_action_enabled(
+    base_state: WorkflowState,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When push is in actions, the reporter pushes the branch."""
+    mock_config.workflow.forge.actions = ["push"]
+    mock_config.workflow.forge.provider = "github"
+
+    pushed: list[str] = []
+
+    class FakeForge:
+        name = "fake"
+
+        def push(self, branch, target, repo_path):
+            pushed.append(branch)
+            return "sha-pushed"
+
+        def create_mr(self, branch, target, title, description):
+            from devflow.forge.base import MRInfo
+            return MRInfo(url="https://fake/mr/1", number=1)
+
+        def healthcheck(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "devflow.nodes.reporter.build_forge_backend", lambda wf: FakeForge()
+    )
+
+    result = reporter_node(base_state, app_cfg=mock_config)
+
+    assert len(pushed) == 1
+    assert result.get("pushed_sha") == "sha-pushed"

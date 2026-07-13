@@ -150,6 +150,8 @@ class WorkflowState(TypedDict, total=False):
     final_verdict: FinalVerdict | None
     rework_count: Annotated[int, _max_reducer]
     pr_url: str | None
+    mr_url: str | None
+    pushed_sha: str | None
     report_url: str | None
     error: WorkflowError | None
     logs: Annotated[list[str], _add_reducer]
