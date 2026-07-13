@@ -26,3 +26,16 @@ daemon:
   port: 8787                         # dashboard API port (localhost only)
   approval_timeout_hours: 8          # max time to wait for human approval
   approval_on_timeout: defer         # defer | reject
+
+# Forge backend configuration (push branches + create merge requests)
+forge:
+  provider: none    # none | github | gitlab | auto (auto = detect from git remote)
+  target_branch: main
+  actions:
+    - publish_report
+    - update_tracker
+    - record_todo
+    # Enable push and create_mr for per_plan/full_detail modes, or leave
+    # them disabled here and they'll be auto-enabled in end_of_day batch:
+    # - push
+    # - create_mr

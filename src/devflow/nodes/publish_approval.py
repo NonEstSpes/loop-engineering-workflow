@@ -63,6 +63,11 @@ def publish_approval_node(
     self_review_notes = state.get("self_review_notes")
     branch = state.get("branch_name")
 
+    # NOTE: commit_message from ReporterResponse is NOT included here because
+    # the reporter LLM runs AFTER this gate. The human reviews the diff and
+    # checker reports, not the proposed commit message. Threading commit_message
+    # into this gate would require running the reporter before publish_approval,
+    # which is a future architectural change.
     payload: dict[str, Any] = {
         "gate_type": "publish_approval",
         "task_id": task.id,

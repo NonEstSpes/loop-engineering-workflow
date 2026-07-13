@@ -83,6 +83,7 @@ class ReporterResponse(BaseModel):
     pr_title: str
     pr_description: str
     corporate_report: str
+    commit_message: str = ""
 
 
 class FileOperation(BaseModel):

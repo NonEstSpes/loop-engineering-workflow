@@ -123,3 +123,38 @@ def test_hitl_strategy_env_override(
     monkeypatch.setenv("DEVFLOW_HITL_STRATEGY", "end_of_day")
     cfg = load_workflow_config(yaml_path)
     assert cfg.hitl_strategy == "end_of_day"
+
+
+def test_workflow_config_has_forge_defaults() -> None:
+    """WorkflowConfig gets sensible forge defaults when not specified."""
+    from devflow.config import WorkflowConfig
+
+    cfg = WorkflowConfig(task_source="mock")
+    assert cfg.forge.provider == "none"
+    assert cfg.forge.target_branch == "main"
+    assert cfg.forge.actions == ["publish_report", "update_tracker", "record_todo"]
+
+
+def test_forge_config_from_yaml(tmp_path: Path) -> None:
+    """Forge config loads from YAML."""
+    from devflow.config import load_workflow_config
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "task_source: mock\n"
+        "forge:\n"
+        "  provider: github\n"
+        "  target_branch: develop\n"
+        "  actions:\n"
+        "    - publish_report\n"
+        "    - update_tracker\n"
+        "    - record_todo\n"
+        "    - push\n"
+        "    - create_mr\n",
+        encoding="utf-8",
+    )
+    cfg = load_workflow_config(yaml_path)
+    assert cfg.forge.provider == "github"
+    assert cfg.forge.target_branch == "develop"
+    assert "push" in cfg.forge.actions
+    assert "create_mr" in cfg.forge.actions
