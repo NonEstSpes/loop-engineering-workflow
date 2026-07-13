@@ -54,6 +54,11 @@ class WorkflowRunner:
         self._batch_store = batch_store
         self.events_published: int = 0
 
+    @property
+    def locks(self) -> DaemonLocks:
+        """Expose locks for scheduler/API coordination."""
+        return self._locks
+
     def run_task(
         self,
         task_id: str,

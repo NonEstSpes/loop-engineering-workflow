@@ -77,3 +77,41 @@ def test_scheduler_registers_eod_job_when_eod_mode(
     # In end_of_day mode, both task and eod jobs should be registered.
     assert scheduler.job_count >= 2
     scheduler.shutdown()
+
+
+def test_eod_wrapper_calls_handler_when_provided(
+    mock_config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_eod_wrapper calls finalize + publish_selected when a handler is set."""
+    mock_config.workflow.hitl_strategy = "end_of_day"
+    mock_config.workflow.daemon.enabled = True
+
+    finalize_called: list[bool] = []
+    publish_called: list[list[str]] = []
+
+    class FakeEodHandler:
+        def finalize(self):
+            finalize_called.append(True)
+            return []
+
+        def publish_selected(self, task_ids):
+            publish_called.append(task_ids)
+            return {"published": [], "failed": [], "skipped": []}
+
+    runner = WorkflowRunner(mock_config, EventBus(), DaemonLocks())
+    scheduler = DaemonScheduler(mock_config, runner, eod_handler=FakeEodHandler())
+
+    scheduler._run_eod_wrapper(repo_path=".")
+
+    assert finalize_called == [True]
+    assert publish_called == [[]]  # publish all pending
+
+
+def test_eod_wrapper_without_handler_is_noop(
+    mock_config: Config,
+) -> None:
+    """_run_eod_wrapper without a handler logs and does not raise."""
+    mock_config.workflow.hitl_strategy = "end_of_day"
+    runner = WorkflowRunner(mock_config, EventBus(), DaemonLocks())
+    scheduler = DaemonScheduler(mock_config, runner)  # no eod_handler
+    scheduler._run_eod_wrapper(repo_path=".")  # must not raise

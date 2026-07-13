@@ -17,6 +17,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from devflow.batch.eod_handler import EodHandler
 from devflow.config import Config, HitlStrategy
 from devflow.daemon.runner import WorkflowRunner
 
@@ -26,9 +27,15 @@ logger = logging.getLogger(__name__)
 class DaemonScheduler:
     """Wraps APScheduler BackgroundScheduler for daemon cron jobs."""
 
-    def __init__(self, app_cfg: Config, runner: WorkflowRunner) -> None:
+    def __init__(
+        self,
+        app_cfg: Config,
+        runner: WorkflowRunner,
+        eod_handler: EodHandler | None = None,
+    ) -> None:
         self._cfg = app_cfg
         self._runner = runner
+        self._eod_handler = eod_handler
         self._scheduler = BackgroundScheduler(daemon=True)
         self._lock = threading.Lock()
         self._jobs_registered = False
@@ -114,9 +121,23 @@ class DaemonScheduler:
             logger.exception("task_run job failed")
 
     def _run_eod_wrapper(self, repo_path: str) -> None:
-        """Job handler: run EOD batch-review. Phase 4 implements the handler."""
+        """Job handler: run EOD batch-review + publish-all.
+
+        Soft lock coordination: if the task_run lock is held (a task run is
+        in progress), we log and skip — APScheduler coalesce will merge
+        missed runs. The hard mutual exclusion is max_instances=1.
+        """
         try:
-            logger.info("eod_review job triggered (not yet implemented in Phase 1)")
-            # Phase 4 will call: self._eod_handler.run_review(repo_path)
+            if self._runner.locks.task_run().locked():
+                logger.warning(
+                    "eod_review skipped: a task run is in progress; will retry next tick"
+                )
+                return
+            if self._eod_handler is None:
+                logger.info("eod_review job triggered but no handler configured")
+                return
+            logger.info("eod_review job triggered")
+            self._eod_handler.finalize()
+            self._eod_handler.publish_selected([])
         except Exception:
             logger.exception("eod_review job failed")
