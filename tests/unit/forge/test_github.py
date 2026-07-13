@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+from git.remote import PushInfo
+
 from devflow.forge.base import MRInfo
 from devflow.forge.github import GitHubBackend
 
@@ -21,7 +24,11 @@ def test_github_push_uses_gitpython() -> None:
     with patch("devflow.forge.github.Repo") as mock_repo_cls:
         mock_repo = MagicMock()
         mock_remote = MagicMock()
-        mock_remote.push.return_value = [MagicMock(new_rev_sha="abc123")]
+        ok_result = MagicMock()
+        ok_result.flags = 0  # success: no ERROR bit set
+        ok_result.summary = ""
+        ok_result.new_rev_sha = "abc123"
+        mock_remote.push.return_value = [ok_result]
         mock_repo.remotes.origin = mock_remote
         mock_repo_cls.return_value = mock_repo
 
@@ -29,6 +36,24 @@ def test_github_push_uses_gitpython() -> None:
 
     mock_remote.push.assert_called_once()
     assert sha is not None
+
+
+def test_push_raises_on_error_flags() -> None:
+    """push() raises RuntimeError when PushInfo has ERROR flag."""
+    backend = GitHubBackend({"token": "abc", "repo": "owner/repo"})
+
+    with patch("devflow.forge.github.Repo") as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_remote = MagicMock()
+        error_result = MagicMock()
+        error_result.flags = PushInfo.ERROR
+        error_result.summary = " ! [rejected] HEAD -> branch (non-fast-forward)"
+        mock_remote.push.return_value = [error_result]
+        mock_repo.remotes.origin = mock_remote
+        mock_repo_cls.return_value = mock_repo
+
+        with pytest.raises(RuntimeError, match="push failed"):
+            backend.push("branch", "main", "/path")
 
 
 def test_github_create_mr_posts_to_api() -> None:

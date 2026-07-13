@@ -311,7 +311,8 @@ def test_reporter_creates_mr_when_action_enabled(
     result = reporter_node(base_state, app_cfg=mock_config)
 
     assert result.get("mr_url") == "https://github.com/owner/repo/pull/1"
-    assert result.get("pr_url") is not None or result.get("mr_url") is not None
+    # backward compat: pr_url mirrors mr_url when create_mr runs
+    assert result.get("pr_url") == "https://github.com/owner/repo/pull/1"
 
 
 def test_reporter_pushes_when_action_enabled(

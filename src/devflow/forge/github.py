@@ -42,6 +42,13 @@ class GitHubBackend(ForgeBackend):
         push_results = remote.push(refspec=f"HEAD:refs/heads/{branch}")
         if push_results:
             result = push_results[0]
+            # GitPython PushInfo flags: ERROR=1024, REJECTED, REMOTE_REJECTED, etc.
+            from git.remote import PushInfo
+
+            if result.flags & PushInfo.ERROR:
+                raise RuntimeError(
+                    f"GitHub push failed (flags={result.flags}): {result.summary}"
+                )
             logger.info(
                 "GitHub push: branch=%s, flags=%s, summary=%s",
                 branch,
