@@ -47,12 +47,10 @@ class NtfyChannel(NotificationChannel):
                 "ntfy channel requires the 'httpx' package. "
                 "Install it with: pip install -e '.[web]'"
             )
-        self._server = (
-            config.get("server") or os.getenv("NTFY_SERVER", DEFAULT_SERVER)
-        ).rstrip("/")
+        server = config.get("server") or os.getenv("NTFY_SERVER", DEFAULT_SERVER)
+        self._server = str(server).rstrip("/")
         self._topic = config.get("topic") or os.getenv("NTFY_TOPIC", "")
         self._token = config.get("token") or os.getenv("NTFY_TOKEN", "")
-        self._client: httpx.Client | None = None
 
     def send(self, message: str, *, parse_mode: str | None = None) -> str:
         """POST ``message`` to the ntfy topic. Returns the topic URL.

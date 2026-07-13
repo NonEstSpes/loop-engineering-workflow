@@ -31,7 +31,10 @@ class EmailChannel(NotificationChannel):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         self._host = config.get("smtp_host") or os.getenv("SMTP_HOST", "")
-        self._port = int(config.get("smtp_port", 0) or os.getenv("SMTP_PORT", "587"))
+        try:
+            self._port = int(config.get("smtp_port", 0) or os.getenv("SMTP_PORT", "587"))
+        except (ValueError, TypeError):
+            self._port = 587
         self._user = config.get("smtp_user") or os.getenv("SMTP_USER", "")
         self._password = config.get("smtp_password") or os.getenv("SMTP_PASSWORD", "")
         self._from = config.get("from_addr") or os.getenv("EMAIL_FROM", "")

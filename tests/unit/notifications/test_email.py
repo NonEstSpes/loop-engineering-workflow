@@ -55,3 +55,14 @@ def test_email_healthcheck_with_config_returns_true() -> None:
         "to_addr": "dev@corp.com",
     })
     assert channel.healthcheck() is True
+
+
+def test_email_channel_handles_bad_port() -> None:
+    """A non-numeric SMTP_PORT falls back to 587 instead of crashing."""
+    channel = EmailChannel({
+        "smtp_host": "smtp.example.com",
+        "smtp_port": "not-a-number",
+        "from_addr": "bot@corp.com",
+        "to_addr": "dev@corp.com",
+    })
+    assert channel._port == 587

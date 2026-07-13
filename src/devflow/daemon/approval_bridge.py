@@ -14,17 +14,14 @@ The ``task_id`` from the interrupt payload is used as the store key
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from devflow.daemon.approval_store import ApprovalStore
+from devflow.graph import ApprovalCallback
 from devflow.notifications.base import NotificationChannel
 from devflow.state import WorkflowState
 
 logger = logging.getLogger(__name__)
-
-# Type alias matching graph.py:264
-ApprovalCallback = Callable[[dict[str, Any], WorkflowState], dict[str, Any]]
 
 
 class ApprovalBridge:
@@ -36,11 +33,13 @@ class ApprovalBridge:
         push_channels: list[NotificationChannel],
         approval_timeout_hours: int,
         on_timeout: str,
+        review_url: str = "",
     ) -> None:
         self._store = store
         self._channels = push_channels
         self._timeout_seconds = approval_timeout_hours * 3600
         self._on_timeout = on_timeout
+        self._review_url = review_url
 
     def build_callback(self) -> ApprovalCallback:
         """Return an ApprovalCallback for run_workflow_interactive."""
@@ -83,10 +82,11 @@ class ApprovalBridge:
     def _send_push(self, gate: str, task_id: str, payload: dict[str, Any]) -> None:
         """Send a push notification about the pending approval. Best-effort."""
         title = payload.get("task_title", task_id)
+        review_line = f"Review at: {self._review_url}\n" if self._review_url else ""
         message = (
             f"devflow: {gate} pending\n"
             f"Task: {title} ({task_id})\n"
-            f"Review at: http://localhost:8787\n"
+            f"{review_line}"
         )
         if gate == "publish_approval":
             diff_preview = (payload.get("diff") or "")[:200]

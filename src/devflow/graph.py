@@ -150,8 +150,14 @@ def build_graph(
             "run_checker": "run_checker",
         },
     )
-    # publish_approval -> reporter (the gate always proceeds to reporter after the decision)
-    graph.add_edge("publish_approval", "reporter")
+    # publish_approval -> reporter on approve, END on reject/error. The
+    # conditional edge (instead of an unconditional add_edge) ensures a human
+    # rejection skips the reporter so the work is NOT published.
+    graph.add_conditional_edges(
+        "publish_approval",
+        _after_publish_approval,
+        {"reporter": "reporter", END: END},
+    )
     graph.add_edge("reporter", END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -174,6 +180,17 @@ def _after_plan_approval(state: WorkflowState) -> str:
         return "maker"
     logger.info("Routing plan_approval -> reporter because plan was rejected")
     return "reporter"
+
+
+def _after_publish_approval(state: WorkflowState) -> str:
+    """Route after publish approval: reporter on approve, END on reject."""
+    if state.get("error"):
+        logger.info("Routing publish_approval -> END due to error")
+        return END
+    if state.get("publish_approved"):
+        return "reporter"
+    logger.info("Routing publish_approval -> END (rejected by human)")
+    return END
 
 
 def _after_self_review(state: WorkflowState) -> list[Send] | str:

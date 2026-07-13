@@ -77,3 +77,27 @@ def test_resolve_clears_entry() -> None:
     store.register("thread-1", {"task_id": "T-1"})
     store.resolve("thread-1", {"approved": True, "reason": "", "requested_changes": []})
     assert store.get_pending() == []
+
+
+def test_resolve_before_wait_returns_decision() -> None:
+    """A resolve that happens BEFORE wait() must still return the decision (not None)."""
+    store = ApprovalStore()
+    store.register("T-1", {"task_id": "T-1"})
+    # Resolve BEFORE calling wait (simulates fast human approval during push I/O)
+    decision = {"approved": True, "reason": "fast", "requested_changes": []}
+    store.resolve("T-1", decision)
+    # Now wait — must return the decision, not None
+    result = store.wait("T-1", timeout=1.0)
+    assert result == decision
+
+
+def test_is_resolved_reflects_state() -> None:
+    """is_resolved() returns True after resolve, False before/unknown."""
+    store = ApprovalStore()
+    store.register("thread-1", {"task_id": "T-1"})
+    assert store.is_resolved("thread-1") is False
+    assert store.is_resolved("unknown") is False
+    store.resolve("thread-1", {"approved": True, "reason": "", "requested_changes": []})
+    assert store.is_resolved("thread-1") is True
+    # Still pending-free in get_pending (filtered as resolved).
+    assert store.get_pending() == []

@@ -42,6 +42,18 @@ _STUB_CHANNELS = {"github", "gitlab", "slack", "teams"}
 _OPTIONAL_CHANNELS = {"telegram", "ntfy"}
 
 
+def _safe_int(value: str, default: int = 587) -> int:
+    """Convert ``value`` to int, returning ``default`` on bad input.
+
+    Used for SMTP_PORT parsing so a malformed env var (e.g. ``SMTP_PORT=abc``)
+    falls back to 587 instead of crashing the daemon at startup.
+    """
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 def _is_telegram_available() -> bool:
     """Return True when the optional ``httpx`` dependency is importable."""
     try:
@@ -158,7 +170,7 @@ def build_notification_channels(
                 "smtp_host": os.getenv(
                     "SMTP_HOST", email_extra.get("smtp_host", "")
                 ),
-                "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+                "smtp_port": _safe_int(os.getenv("SMTP_PORT", "587")),
                 "smtp_user": os.getenv(
                     "SMTP_USER", email_extra.get("smtp_user", "")
                 ),

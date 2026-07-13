@@ -27,6 +27,10 @@ class _PendingApproval:
         self.payload = payload
         self.event = threading.Event()
         self.decision: dict[str, Any] | None = None
+        # True once resolve() has delivered a decision. The entry is kept in
+        # the dict (not deleted) so a wait() that starts AFTER resolve() can
+        # still find the decision; get_pending() filters resolved entries out.
+        self.resolved: bool = False
 
 
 class ApprovalStore:
@@ -46,6 +50,12 @@ class ApprovalStore:
         """Deliver a human decision to a pending approval.
 
         Returns True if the thread_id was found and resolved, False otherwise.
+
+        Note: the entry is NOT removed from ``_pending``. Instead it is marked
+        ``resolved=True`` so a ``wait()`` that starts after ``resolve()``
+        (e.g. the bridge is still inside ``_send_push`` when the human
+        approves) still finds the decision. ``get_pending()`` filters out
+        resolved entries. Call ``remove()`` to actually delete the entry.
         """
         with self._lock:
             entry = self._pending.get(thread_id)
@@ -53,9 +63,8 @@ class ApprovalStore:
                 logger.warning("resolve: unknown thread_id %s", thread_id)
                 return False
             entry.decision = decision
+            entry.resolved = True
             entry.event.set()
-            # Remove from pending immediately so get_pending() reflects the change.
-            del self._pending[thread_id]
         approved = decision.get("approved")
         logger.info("Resolved approval for thread %s: approved=%s", thread_id, approved)
         return True
@@ -78,13 +87,28 @@ class ApprovalStore:
     def get_pending(self) -> list[dict[str, Any]]:
         """Return a list of pending approvals with their payloads.
 
-        Each entry: ``{"thread_id": str, "payload": dict}``.
+        Each entry: ``{"thread_id": str, "payload": dict}``. Resolved entries
+        (those that have already received a decision via ``resolve()``) are
+        filtered out, even though they are still kept internally so a late
+        ``wait()`` can still return the decision.
         """
         with self._lock:
             return [
                 {"thread_id": e.thread_id, "payload": e.payload}
                 for e in self._pending.values()
+                if not e.resolved
             ]
+
+    def is_resolved(self, thread_id: str) -> bool:
+        """Return True if ``thread_id`` exists and has been resolved.
+
+        Returns False if the thread_id is unknown or has not yet received a
+        decision. Used by the bridge to distinguish a real timeout from an
+        approval that was resolved while the bridge was busy.
+        """
+        with self._lock:
+            entry = self._pending.get(thread_id)
+            return entry is not None and entry.resolved
 
     def remove(self, thread_id: str) -> None:
         """Remove a pending approval (e.g. after timeout or cancellation)."""

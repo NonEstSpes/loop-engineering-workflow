@@ -53,18 +53,27 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     # 3. Create shared components.
     event_bus = EventBus()
     locks = DaemonLocks()
-    runner = WorkflowRunner(app_cfg, event_bus, locks)
 
     # 3b. Create approval store + bridge for HITL strategies.
     approval_store = ApprovalStore()
-    push_channels = build_notification_channels(app_cfg.workflow)
+    # Build push channels specifically for approval notifications.
+    # approval_push_channels is a separate list so enabling ntfy for
+    # approvals doesn't also route all corporate reports to ntfy.
+    push_channel_names = app_cfg.workflow.approval_push_channels
+    if push_channel_names:
+        push_cfg = app_cfg.model_copy(deep=True)
+        push_cfg.workflow.corporate_report_channels = push_channel_names
+        push_channels = build_notification_channels(push_cfg.workflow)
+    else:
+        push_channels = []
     bridge = ApprovalBridge(
         store=approval_store,
         push_channels=push_channels,
         approval_timeout_hours=daemon_cfg.approval_timeout_hours,
         on_timeout=daemon_cfg.approval_on_timeout,
+        review_url=f"http://localhost:{daemon_cfg.port}",
     )
-    # Recreate the runner with the bridge attached so run_task uses
+    # Construct the runner once, with the bridge attached so run_task uses
     # run_workflow_interactive (pausing on plan/publish approval interrupts).
     runner = WorkflowRunner(app_cfg, event_bus, locks, approval_bridge=bridge)
 

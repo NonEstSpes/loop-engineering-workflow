@@ -20,6 +20,7 @@ def _make_bridge(store: ApprovalStore | None = None) -> ApprovalBridge:
         push_channels=[mock_channel],
         approval_timeout_hours=1,
         on_timeout="defer",
+        review_url="http://localhost:8787",
     )
 
 
@@ -121,3 +122,24 @@ def test_callback_thread_id_from_payload() -> None:
     resolver.join(timeout=2.0)
 
     assert result["approved"] is True
+
+
+def test_push_message_uses_review_url() -> None:
+    """The push message contains the configured review_url (not hardcoded 8787)."""
+    store = ApprovalStore()
+    mock_channel = MagicMock()
+    mock_channel.send.return_value = "ok"
+    bridge = ApprovalBridge(
+        store=store,
+        push_channels=[mock_channel],
+        approval_timeout_hours=1,
+        on_timeout="defer",
+        review_url="http://localhost:9999",
+    )
+
+    # Call _send_push directly to inspect the message.
+    bridge._send_push("plan_approval", "T-1", {"task_title": "My Task"})
+
+    sent_message = mock_channel.send.call_args[0][0]
+    assert "http://localhost:9999" in sent_message
+    assert "8787" not in sent_message
