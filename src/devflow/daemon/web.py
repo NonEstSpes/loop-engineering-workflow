@@ -13,10 +13,11 @@ import logging
 import time
 from typing import Any
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 from devflow.config import Config
+from devflow.daemon.approval_store import ApprovalStore
 from devflow.daemon.events import EventBus
 from devflow.daemon.locks import DaemonLocks
 
@@ -39,16 +40,30 @@ class StateResponse(BaseModel):
     task_source: str
 
 
+class ApprovalDecision(BaseModel):
+    """Body of a POST /api/approvals/{thread_id} decision."""
+
+    approved: bool
+    reason: str = ""
+    requested_changes: list[str] = Field(default_factory=list)
+
+
 def create_app(
     app_cfg: Config,
     locks: DaemonLocks,
     event_bus: EventBus,
     runner: Any | None = None,
+    approval_store: ApprovalStore | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
     ``runner`` is the WorkflowRunner (or None in Phase 1 tests). It will be
     used by Phase 2+ endpoints to query task progress and approvals.
+
+    ``approval_store`` is the registry of pending human approvals (Task 4).
+    When provided, this exposes ``GET /api/approvals`` and
+    ``POST /api/approvals/{thread_id}``, and populates ``pending_approvals``
+    in ``GET /api/health``.
     """
     app = FastAPI(title="devflow-daemon", version="0.1.0")
     start_time = time.monotonic()
@@ -68,11 +83,13 @@ def create_app(
     async def health() -> HealthResponse:
         uptime = int(time.monotonic() - start_time)
         task_running = _is_task_running()
+        pending = len(approval_store.get_pending()) if approval_store else 0
         return HealthResponse(
             status="degraded" if task_running else "healthy",
             scheduler="busy" if task_running else "running",
             uptime_seconds=uptime,
             current_task=_state.get("current_task"),
+            pending_approvals=pending,
         )
 
     @app.get("/api/state", response_model=StateResponse)
@@ -91,6 +108,28 @@ def create_app(
             task_source=app_cfg.workflow.task_source,
         )
 
+    if approval_store is not None:
+
+        @app.get("/api/approvals")
+        async def list_approvals() -> list[dict[str, Any]]:
+            return approval_store.get_pending()
+
+        @app.post("/api/approvals/{thread_id}")
+        async def resolve_approval(thread_id: str, decision: ApprovalDecision) -> dict[str, Any]:
+            resolved = approval_store.resolve(
+                thread_id,
+                {
+                    "approved": decision.approved,
+                    "reason": decision.reason,
+                    "requested_changes": decision.requested_changes,
+                },
+            )
+            if not resolved:
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown thread_id: {thread_id}"
+                )
+            return {"status": "resolved", "thread_id": thread_id}
+
     def set_current_task(task_id: str | None) -> None:
         """Allow the runner to report which task is currently active."""
         _state["current_task"] = task_id
@@ -106,10 +145,15 @@ def run_web_server(
     locks: DaemonLocks,
     event_bus: EventBus,
     runner: Any | None = None,
+    approval_store: ApprovalStore | None = None,
 ) -> None:
-    """Run the uvicorn server (blocking). Called from the daemon entry point."""
+    """Run the uvicorn server (blocking). Called from the daemon entry point.
+
+    ``approval_store`` (Task 4) is forwarded to ``create_app`` so the
+    ``/api/approvals`` endpoints can be exposed when the daemon wires it in.
+    """
     import uvicorn
 
-    app = create_app(app_cfg, locks, event_bus, runner)
+    app = create_app(app_cfg, locks, event_bus, runner, approval_store=approval_store)
     port = app_cfg.workflow.daemon.port
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

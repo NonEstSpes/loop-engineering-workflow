@@ -48,6 +48,11 @@ class WorkflowConfig(BaseModel):
     default_branch: str = "main"
     pr_target_branch: str = "main"
     corporate_report_channels: list[str] = Field(default_factory=list)
+    # Channels used by the daemon to push "approval pending" notifications.
+    # Separate from corporate_report_channels so enabling ntfy (or any
+    # push channel) for HITL approvals does NOT also route all corporate
+    # reports to that channel. Empty by default (no push notifications).
+    approval_push_channels: list[str] = Field(default_factory=list)
     # Path to the TODO.md file that the orchestrator reads task entries from
     # and the reporter writes completion results back to. May be overridden by
     # the --todo-path CLI flag or the DEVFLOW_TODO_PATH env variable.

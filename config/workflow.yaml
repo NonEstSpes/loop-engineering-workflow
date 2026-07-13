@@ -6,6 +6,9 @@ default_branch: main
 pr_target_branch: main
 corporate_report_channels:
   - console
+  # Available channels (Phase 2+):
+  # - ntfy    # push notifications via ntfy.sh (needs NTFY_TOPIC env)
+  # - email   # SMTP email (needs SMTP_HOST, EMAIL_FROM, EMAIL_TO env)
 # Path to TODO.md — the orchestrator reads task entries from here (selecting by
 # #r0..#r5 priority) and the reporter writes the result back into the same line.
 # Override per-run with --todo-path or the DEVFLOW_TODO_PATH env variable.

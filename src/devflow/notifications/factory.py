@@ -20,13 +20,16 @@ from typing import Any
 from devflow.config import WorkflowConfig
 from devflow.notifications.base import NotificationChannel
 from devflow.notifications.console import ConsoleChannel
+from devflow.notifications.email_channel import EmailChannel
 
 logger = logging.getLogger(__name__)
 
 # Only the always-available channels are eagerly imported. Telegram is imported
-# lazily because it pulls in the optional ``httpx`` dependency.
+# lazily because it pulls in the optional ``httpx`` dependency. email uses only
+# stdlib (smtplib) so it is eagerly imported alongside console.
 _NOTIFICATION_REGISTRY: dict[str, type[NotificationChannel]] = {
     "console": ConsoleChannel,
+    "email": EmailChannel,
 }
 
 # Channels that are recognised in config but not yet implemented as real
@@ -34,11 +37,33 @@ _NOTIFICATION_REGISTRY: dict[str, type[NotificationChannel]] = {
 _STUB_CHANNELS = {"github", "gitlab", "slack", "teams"}
 
 # Channels that require an optional dependency. They are imported lazily and
-# skipped gracefully when the dependency is missing.
-_OPTIONAL_CHANNELS = {"telegram"}
+# skipped gracefully when the dependency is missing. ntfy (like telegram) needs
+# ``httpx``, available via the ``web`` extra.
+_OPTIONAL_CHANNELS = {"telegram", "ntfy"}
+
+
+def _safe_int(value: str, default: int = 587) -> int:
+    """Convert ``value`` to int, returning ``default`` on bad input.
+
+    Used for SMTP_PORT parsing so a malformed env var (e.g. ``SMTP_PORT=abc``)
+    falls back to 587 instead of crashing the daemon at startup.
+    """
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 
 def _is_telegram_available() -> bool:
+    """Return True when the optional ``httpx`` dependency is importable."""
+    try:
+        import httpx  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _is_ntfy_available() -> bool:
     """Return True when the optional ``httpx`` dependency is importable."""
     try:
         import httpx  # noqa: F401
@@ -55,13 +80,15 @@ def build_notification_channels(
 
     For each name in ``workflow_cfg.corporate_report_channels``:
     * a registered channel is built from env vars (+ optional ``extra``);
-    * an optional channel (telegram) is imported lazily and skipped with a
+    * an optional channel (telegram/ntfy) is imported lazily and skipped with a
       warning when its dependency (httpx) is not installed;
     * a known stub (github/gitlab/slack/teams) is skipped with a warning;
     * any other name raises ``ValueError``.
 
     Telegram reads ``TELEGRAM_BOT_TOKEN``, ``TELEGRAM_CHAT_ID`` and the optional
     ``TELEGRAM_API_BASE`` from the environment, mirroring the Redmine pattern.
+    ntfy reads ``NTFY_SERVER``, ``NTFY_TOPIC`` and the optional ``NTFY_TOKEN``
+    (bearer token for self-hosted auth).
     """
     extra = extra or {}
     channels: list[NotificationChannel] = []
@@ -85,10 +112,24 @@ def build_notification_channels(
                     name,
                 )
                 continue
+            if name == "ntfy" and not _is_ntfy_available():
+                logger.warning(
+                    "Notification channel '%s' requires the optional 'httpx' "
+                    "package; install it with `pip install -e '.[web]'`. "
+                    "Skipping '%s'.",
+                    name,
+                    name,
+                )
+                continue
             # Lazy import so the module loads without httpx installed.
-            from devflow.notifications.telegram import TelegramChannel
+            if name == "telegram":
+                from devflow.notifications.telegram import TelegramChannel
 
-            cls = TelegramChannel
+                cls = TelegramChannel
+            elif name == "ntfy":
+                from devflow.notifications.ntfy import NtfyChannel
+
+                cls = NtfyChannel
         else:
             cls = _NOTIFICATION_REGISTRY.get(name)
             if cls is None:
@@ -108,6 +149,39 @@ def build_notification_channels(
                 "chat_id": os.getenv("TELEGRAM_CHAT_ID", extra.get("chat_id", "")),
                 "api_base": os.getenv(
                     "TELEGRAM_API_BASE", extra.get("api_base", "")
+                ),
+            }
+        elif name == "ntfy":
+            ntfy_extra = extra.get("ntfy", {})
+            config = {
+                "server": os.getenv(
+                    "NTFY_SERVER", ntfy_extra.get("server", "")
+                ),
+                "topic": os.getenv(
+                    "NTFY_TOPIC", ntfy_extra.get("topic", "")
+                ),
+                "token": os.getenv(
+                    "NTFY_TOKEN", ntfy_extra.get("token", "")
+                ),
+            }
+        elif name == "email":
+            email_extra = extra.get("email", {})
+            config = {
+                "smtp_host": os.getenv(
+                    "SMTP_HOST", email_extra.get("smtp_host", "")
+                ),
+                "smtp_port": _safe_int(os.getenv("SMTP_PORT", "587")),
+                "smtp_user": os.getenv(
+                    "SMTP_USER", email_extra.get("smtp_user", "")
+                ),
+                "smtp_password": os.getenv(
+                    "SMTP_PASSWORD", email_extra.get("smtp_password", "")
+                ),
+                "from_addr": os.getenv(
+                    "EMAIL_FROM", email_extra.get("from_addr", "")
+                ),
+                "to_addr": os.getenv(
+                    "EMAIL_TO", email_extra.get("to_addr", "")
                 ),
             }
         else:
