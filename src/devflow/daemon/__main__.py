@@ -13,7 +13,10 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+from pathlib import Path
 
+from devflow.batch.eod_handler import EodHandler
+from devflow.batch.store import BatchStore
 from devflow.config import load_config
 from devflow.daemon.approval_bridge import ApprovalBridge
 from devflow.daemon.approval_store import ApprovalStore
@@ -54,6 +57,12 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     event_bus = EventBus()
     locks = DaemonLocks()
 
+    # 3a. Batch store + EOD handler (always constructed; used by health
+    # endpoint regardless of strategy, and by the eod_review cron job in
+    # end_of_day mode).
+    batch_store = BatchStore(str(Path(repo_path) / ".devflow" / "batch_store.db"))
+    eod_handler = EodHandler(app_cfg, batch_store, event_bus, repo_path=repo_path)
+
     # 3b. Create approval store + bridge for HITL strategies.
     approval_store = ApprovalStore()
     # Build push channels specifically for approval notifications.
@@ -75,10 +84,12 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     )
     # Construct the runner once, with the bridge attached so run_task uses
     # run_workflow_interactive (pausing on plan/publish approval interrupts).
-    runner = WorkflowRunner(app_cfg, event_bus, locks, approval_bridge=bridge)
+    runner = WorkflowRunner(
+        app_cfg, event_bus, locks, approval_bridge=bridge, batch_store=batch_store
+    )
 
     # 4. Create and start scheduler, register jobs.
-    scheduler = DaemonScheduler(app_cfg, runner)
+    scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
     scheduler.start()
     scheduler.register_jobs(repo_path)
 
@@ -99,10 +110,14 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     # is a best-effort bonus, not the primary shutdown path).
     logger.info("Starting web server on 127.0.0.1:%d", daemon_cfg.port)
     try:
-        run_web_server(app_cfg, locks, event_bus, runner, approval_store=approval_store)
+        run_web_server(
+            app_cfg, locks, event_bus, runner,
+            approval_store=approval_store, eod_handler=eod_handler,
+        )
     finally:
         logger.info("Web server stopped; shutting down scheduler...")
         scheduler.shutdown()
+        batch_store.close()
         logger.info("Daemon stopped.")
 
 
