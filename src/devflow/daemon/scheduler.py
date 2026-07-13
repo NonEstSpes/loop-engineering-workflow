@@ -111,9 +111,7 @@ class DaemonScheduler:
     def _run_all_wrapper(self, repo_path: str) -> None:
         """Job handler: run all open tasks. Catches exceptions so APScheduler
         doesn't kill the scheduler on a single failure."""
-        # TODO(Phase 4): acquire locks.task_run() around run_all so that
-        # task runs and EOD-publish cannot execute simultaneously.
-        # Phase 1 relies on APScheduler max_instances=1 per job.
+        # Concurrency: relies on APScheduler max_instances=1; no cross-loop lock (see HANDOFF.md).
         try:
             logger.info("task_run job triggered")
             self._runner.run_all(repo_path=repo_path)
@@ -123,16 +121,15 @@ class DaemonScheduler:
     def _run_eod_wrapper(self, repo_path: str) -> None:
         """Job handler: run EOD batch-review + publish-all.
 
-        Soft lock coordination: if the task_run lock is held (a task run is
-        in progress), we log and skip — APScheduler coalesce will merge
-        missed runs. The hard mutual exclusion is max_instances=1.
+        Concurrency note: no asyncio lock is acquired here. The daemon is
+        multi-threaded (APScheduler thread + uvicorn thread pool), so an
+        asyncio.Lock cannot be safely shared across loops. Mutual exclusion
+        relies on APScheduler max_instances=1 per job id + the task_schedule
+        and eod_schedule being at different wall-clock times. If an operator
+        sets them close together or a task run overruns past eod_schedule,
+        overlap is possible — see HANDOFF.md known limitations.
         """
         try:
-            if self._runner.locks.task_run().locked():
-                logger.warning(
-                    "eod_review skipped: a task run is in progress; will retry next tick"
-                )
-                return
             if self._eod_handler is None:
                 logger.info("eod_review job triggered but no handler configured")
                 return

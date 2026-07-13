@@ -40,9 +40,9 @@ class BatchPublisher:
         4. source.update_task_status(resolved)
         5. mark entry PUBLISHED in store
 
-        If push or create_mr fails, the entry stays PENDING_REVIEW (retryable).
-        Report publish and tracker update failures are logged but do not block
-        the published marking when push/MR succeeded.
+        If push fails, the entry stays PENDING_REVIEW (retryable at next EOD).
+        A create_mr failure is logged but does not block the published marking
+        (the entry is published with mr_url=None).
         """
         forge_cfg = self._cfg.workflow.forge
         forge = None

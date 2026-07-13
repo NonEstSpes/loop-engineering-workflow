@@ -78,9 +78,7 @@ class WorkflowRunner:
         :attr:`locks` for the scheduler/orchestrator to acquire around the
         call (Phase 4); this method itself stays synchronous.
         """
-        # TODO(Phase 4): acquire locks.task_run() around the graph.invoke call
-        # so task runs coordinate with EOD-publish. Phase 1 ships the lock
-        # unused; max_instances=1 on the APScheduler job is the only guard.
+        # Concurrency: relies on APScheduler max_instances=1; no cross-loop lock (see HANDOFF.md).
         topic = f"task.{task_id}"
 
         self._publish(

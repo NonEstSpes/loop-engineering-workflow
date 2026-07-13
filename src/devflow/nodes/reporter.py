@@ -23,7 +23,16 @@ logger = logging.getLogger(__name__)
 def reporter_node(
     state: WorkflowState, *, app_cfg: Config, prepare_only: bool = False
 ) -> dict[str, Any]:
-    """Generate PR description and corporate report; optionally publish them."""
+    """Generate PR description and corporate report; optionally publish them.
+
+    Args:
+        state: The workflow state carrying the task, plan, diff, and reports.
+        app_cfg: The application config (agents, workflow, notifications).
+        prepare_only: When True, only the ``record_todo`` action runs locally;
+            publishing, tracker updates, push, and create_mr are deferred to
+            the batch-publish stage. (Not yet wired through the graph; reserved
+            for future end_of_day per-task local-only runs.)
+    """
     task = state.get("task")
     plan = state.get("plan")
     diff = state.get("diff") or ""

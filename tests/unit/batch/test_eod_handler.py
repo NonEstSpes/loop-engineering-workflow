@@ -133,6 +133,34 @@ def test_publish_selected_records_failed(handler: EodHandler, monkeypatch) -> No
     assert result["failed"] == ["T-1"]
 
 
+def test_publish_selected_push_failure_recorded_as_failed(
+    handler: EodHandler, monkeypatch
+) -> None:
+    """A publish whose push fails internally (caught, entry left PENDING_REVIEW)
+    must be recorded in failed, NOT published — even though publish() returned
+    without raising."""
+
+    from devflow.batch.models import BatchStatus
+
+    class PushFailPublisher:
+        """Simulates BatchPublisher.publish() when push fails: it catches the
+        push exception internally and returns the entry still PENDING_REVIEW."""
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def publish(self, entry):
+            # Mimic the push-failed early return: leave entry pending.
+            assert entry.status == BatchStatus.PENDING_REVIEW
+            return entry
+
+    monkeypatch.setattr(handler, "build_publisher", lambda: PushFailPublisher())
+    handler._store.add(_make_entry("T-1"))
+    result = handler.publish_selected(["T-1"])
+    assert result["published"] == []
+    assert result["failed"] == ["T-1"]
+
+
 async def test_finalize_publishes_eod_ready_event(handler: EodHandler) -> None:
     """finalize() returns pending entries and publishes an eod.ready event."""
     handler._store.add(_make_entry("T-1"))

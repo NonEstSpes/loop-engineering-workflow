@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import Any
 
-from devflow.batch.models import BatchEntry
+from devflow.batch.models import BatchEntry, BatchStatus
 from devflow.batch.publisher import BatchPublisher
 from devflow.batch.store import BatchStore
 from devflow.config import Config
@@ -66,8 +66,16 @@ class EodHandler:
                 continue
             try:
                 publisher.publish(entry)
-                published.append(entry.task_id)
-                logger.info("EOD: published task %s", entry.task_id)
+                if entry.status == BatchStatus.PUBLISHED:
+                    published.append(entry.task_id)
+                    logger.info("EOD: published task %s", entry.task_id)
+                else:
+                    failed.append(entry.task_id)
+                    logger.warning(
+                        "EOD: publish did not complete for task %s (still %s)",
+                        entry.task_id,
+                        entry.status,
+                    )
             except Exception:
                 logger.exception("EOD: publish failed for task %s", entry.task_id)
                 failed.append(entry.task_id)

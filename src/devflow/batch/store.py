@@ -88,6 +88,7 @@ class BatchStore:
         assigned = cur.lastrowid
         assert assigned is not None  # AUTOINCREMENT always returns an id
         entry.id = assigned
+        logger.debug("BatchStore: added entry id=%s for task %s", assigned, entry.task_id)
         return assigned
 
     def get_entry(self, entry_id: int) -> BatchEntry | None:
@@ -167,6 +168,7 @@ class BatchStore:
             (entry.status, entry.model_dump_json(), entry_id),
         )
         self._conn.commit()
+        logger.debug("BatchStore: updated entry id=%s -> status=%s", entry_id, status)
         return True
 
     def count_pending(self) -> int:

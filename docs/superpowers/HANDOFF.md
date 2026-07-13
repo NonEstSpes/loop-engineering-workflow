@@ -88,6 +88,26 @@
 - `HealthResponse.batch_store_pending` populated
 - Soft lock coordination (cross-loop limitation documented)
 
+#### Known limitations (Phase 4)
+
+- **`prepare_only` not wired through the graph.** The reporter's `prepare_only`
+  param (Task 3) exists and is fully implemented — when True, only `record_todo`
+  runs locally and publish/push/MR are deferred. However, `graph.py` builds
+  `partial(reporter_node, app_cfg=app_cfg)` WITHOUT setting `prepare_only`, so
+  in `end_of_day` mode the per-task EOD runs currently execute the DEFAULT
+  `forge.actions` (`publish_report`, `update_tracker`, `record_todo`) during the
+  day. This means `publish_report` and `update_tracker` run BOTH per-task during
+  the day AND again at the EOD batch-publish stage (double behavior) — an
+  accepted trade-off, since both are idempotent best-effort operations. Wiring
+  `prepare_only` through the graph (so per-task EOD runs are truly local-only)
+  was explicitly deferred per Task 6's decision — it is a larger change and is
+  tracked as future work.
+- **Cross-loop hard mutual exclusion (eod_review ↔ task_run).** No asyncio
+  `Lock` is shared across the APScheduler thread and uvicorn's thread pool
+  (cannot be done safely). `max_instances=1` per APScheduler job id is the only
+  hard guard; if task and EOD schedules are set close together or a task run
+  overruns past `eod_schedule`, overlap is possible.
+
 ## Что осталось (Phase 5)
 
 ### Phase 5: Vue 3 SPA dashboard
