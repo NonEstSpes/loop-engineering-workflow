@@ -35,7 +35,10 @@ forge:
     - publish_report
     - update_tracker
     - record_todo
-    # Enable push and create_mr for per_plan/full_detail modes, or leave
-    # them disabled here and they'll be auto-enabled in end_of_day batch:
+    # In end_of_day mode, push + create_mr are invoked by the EOD batch
+    # publisher (Phase 4) regardless of this list — per-task runs stay local
+    # (only record_todo), and the batch-publish step pushes branches + opens
+    # MRs for all approved tasks at once. For per_plan/full_detail, uncomment
+    # to push/open MRs per task:
     # - push
     # - create_mr
