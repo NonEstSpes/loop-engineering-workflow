@@ -137,7 +137,7 @@ async def test_finalize_publishes_eod_ready_event(handler: EodHandler) -> None:
     """finalize() returns pending entries and publishes an eod.ready event."""
     handler._store.add(_make_entry("T-1"))
     queue = await handler._bus.subscribe("eod")
-    pending = await handler.finalize()
+    pending = handler.finalize()
     assert len(pending) == 1
     msg = await queue.get()
     assert msg["event"] == "eod.ready"

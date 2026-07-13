@@ -20,26 +20,6 @@ from devflow.daemon.events import EventBus
 logger = logging.getLogger(__name__)
 
 
-class _AwaitableList(list[BatchEntry]):
-    """A ``list`` that is also awaitable (awaits to itself).
-
-    ``finalize()`` is a synchronous method per its interface, but its event
-    publish (via ``_publish_event``) is asynchronous. When ``finalize()`` is
-    called from within a running event loop (e.g. an async test or an async
-    API route), the caller may legitimately want to ``await`` it so the
-    scheduled publish task is observable on the next loop iteration. A plain
-    ``list`` cannot be awaited; this subclass makes ``await result`` return
-    the list unchanged (the generator yields nothing, so awaiting never
-    suspends, but it does satisfy ``await`` syntax) while keeping
-    ``isinstance(result, list)`` true for synchronous callers.
-    """
-
-    def __await__(self):  # type: ignore[override]
-        # Generator: yields nothing (no suspension); returns self.
-        return self
-        yield  # pragma: no cover - makes __await__ a generator
-
-
 class EodHandler:
     """Coordinate EOD batch review and publish."""
 
@@ -101,11 +81,8 @@ class EodHandler:
     def finalize(self) -> list[BatchEntry]:
         """Trigger EOD review: list pending + emit ``eod.ready`` event.
 
-        Returns the pending entries (as a list). The ``eod.ready`` event is
-        published best-effort on the ``eod`` topic (consumed by Phase 5 SSE /
-        UI). The return value is awaitable in async contexts (awaits to
-        itself) so the scheduled publish is observable on the next loop
-        iteration, but synchronous callers treat it as a plain list.
+        Returns the pending entries. The ``eod.ready`` event is published
+        best-effort on the ``eod`` topic (consumed by Phase 5 SSE / UI).
         """
         pending = self._store.get_pending()
         self._publish_event(
@@ -113,7 +90,7 @@ class EodHandler:
             {"event": "eod.ready", "pending_count": len(pending)},
         )
         logger.info("EOD finalize: %d pending entr(y/ies)", len(pending))
-        return _AwaitableList(pending)
+        return pending
 
     def _publish_event(self, topic: str, data: dict[str, Any]) -> None:
         """Best-effort event publish (mirrors WorkflowRunner._publish)."""
