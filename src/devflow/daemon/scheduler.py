@@ -17,6 +17,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from devflow.batch.eod_handler import EodHandler
 from devflow.config import Config, HitlStrategy
 from devflow.daemon.runner import WorkflowRunner
 
@@ -26,9 +27,15 @@ logger = logging.getLogger(__name__)
 class DaemonScheduler:
     """Wraps APScheduler BackgroundScheduler for daemon cron jobs."""
 
-    def __init__(self, app_cfg: Config, runner: WorkflowRunner) -> None:
+    def __init__(
+        self,
+        app_cfg: Config,
+        runner: WorkflowRunner,
+        eod_handler: EodHandler | None = None,
+    ) -> None:
         self._cfg = app_cfg
         self._runner = runner
+        self._eod_handler = eod_handler
         self._scheduler = BackgroundScheduler(daemon=True)
         self._lock = threading.Lock()
         self._jobs_registered = False
@@ -104,9 +111,7 @@ class DaemonScheduler:
     def _run_all_wrapper(self, repo_path: str) -> None:
         """Job handler: run all open tasks. Catches exceptions so APScheduler
         doesn't kill the scheduler on a single failure."""
-        # TODO(Phase 4): acquire locks.task_run() around run_all so that
-        # task runs and EOD-publish cannot execute simultaneously.
-        # Phase 1 relies on APScheduler max_instances=1 per job.
+        # Concurrency: relies on APScheduler max_instances=1; no cross-loop lock (see HANDOFF.md).
         try:
             logger.info("task_run job triggered")
             self._runner.run_all(repo_path=repo_path)
@@ -114,9 +119,22 @@ class DaemonScheduler:
             logger.exception("task_run job failed")
 
     def _run_eod_wrapper(self, repo_path: str) -> None:
-        """Job handler: run EOD batch-review. Phase 4 implements the handler."""
+        """Job handler: run EOD batch-review + publish-all.
+
+        Concurrency note: no asyncio lock is acquired here. The daemon is
+        multi-threaded (APScheduler thread + uvicorn thread pool), so an
+        asyncio.Lock cannot be safely shared across loops. Mutual exclusion
+        relies on APScheduler max_instances=1 per job id + the task_schedule
+        and eod_schedule being at different wall-clock times. If an operator
+        sets them close together or a task run overruns past eod_schedule,
+        overlap is possible — see HANDOFF.md known limitations.
+        """
         try:
-            logger.info("eod_review job triggered (not yet implemented in Phase 1)")
-            # Phase 4 will call: self._eod_handler.run_review(repo_path)
+            if self._eod_handler is None:
+                logger.info("eod_review job triggered but no handler configured")
+                return
+            logger.info("eod_review job triggered")
+            self._eod_handler.finalize()
+            self._eod_handler.publish_selected([])
         except Exception:
             logger.exception("eod_review job failed")

@@ -12,6 +12,7 @@ from devflow.config import Config
 from devflow.daemon.events import EventBus
 from devflow.daemon.locks import DaemonLocks
 from devflow.daemon.runner import WorkflowRunner
+from devflow.mcp.mock import MockTaskSource
 from devflow.state import FinalVerdict
 
 
@@ -77,8 +78,6 @@ def test_run_all_processes_multiple_tasks(
     fake_llm_factory: Any,
 ) -> None:
     """WorkflowRunner.run_all fetches and processes multiple tasks."""
-    from devflow.mcp.mock import MockTaskSource
-
     # Give the mock task source some tasks.
     mock_config.workflow.task_source = "mock"
     bus = EventBus()
@@ -162,3 +161,70 @@ def test_run_task_falls_back_to_non_interactive_without_bridge(
         thread_id="non-interactive-test",
     )
     assert final_state.get("final_verdict") == FinalVerdict.APPROVE
+
+
+def test_run_task_end_of_day_stores_batch_entry(
+    temp_git_repo: Path,
+    mock_config: Config,
+    fake_llm_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In end_of_day mode with a batch_store, run_task stores a BatchEntry."""
+    from devflow.batch.store import BatchStore
+    from devflow.config import HitlStrategy
+
+    mock_config.workflow.hitl_strategy = HitlStrategy.END_OF_DAY
+    mock_config.workflow.human_in_the_loop = True
+
+    store = BatchStore(temp_git_repo / ".devflow" / "batch_store.db")
+    try:
+        runner = WorkflowRunner(
+            mock_config,
+            EventBus(),
+            DaemonLocks(),
+            task_source=MockTaskSource({}),
+            batch_store=store,
+        )
+        # We don't run the full graph (needs LLM etc.); instead test the
+        # storage helper directly.
+        from devflow.schemas import PlanStep, ReporterResponse
+        from devflow.state import (
+            CheckerReport,
+            CheckerVerdict,
+            FinalVerdict,
+            Plan,
+            Task,
+            WorkflowState,
+        )
+
+        final_state: WorkflowState = {
+            "task": Task(id="T-99", title="Batch test", description="d"),
+            "plan": Plan(summary="s", steps=[PlanStep(id="1", description="d")]),
+            "diff": "diff content",
+            "branch_name": "devflow/T-99/abc12345",
+            "worktree_path": str(temp_git_repo),
+            "checker_reports": [
+                CheckerReport(
+                    agent_name="checker_a",
+                    verdict=CheckerVerdict.APPROVE,
+                    summary="ok",
+                )
+            ],
+            "final_verdict": FinalVerdict.APPROVE,
+            "self_review_notes": "fine",
+            "reporter_artifacts": ReporterResponse(
+                pr_title="feat: x",
+                pr_description="desc",
+                corporate_report="report",
+                commit_message="feat: x",
+            ),
+        }
+        entry_id = runner._store_batch_entry("T-99", final_state)
+        assert entry_id > 0
+        assert store.count_pending() == 1
+        entry = store.get_entry(entry_id)
+        assert entry is not None
+        assert entry.task_id == "T-99"
+        assert entry.reporter_artifacts.pr_title == "feat: x"
+    finally:
+        store.close()

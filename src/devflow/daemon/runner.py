@@ -20,7 +20,9 @@ import logging
 import traceback
 from typing import Any
 
-from devflow.config import Config
+from devflow.batch.models import BatchEntry
+from devflow.batch.store import BatchStore
+from devflow.config import Config, HitlStrategy
 from devflow.daemon.approval_bridge import ApprovalBridge
 from devflow.daemon.events import EventBus
 from devflow.daemon.locks import DaemonLocks
@@ -42,13 +44,20 @@ class WorkflowRunner:
         locks: DaemonLocks,
         task_source: TaskSource | None = None,
         approval_bridge: ApprovalBridge | None = None,
+        batch_store: BatchStore | None = None,
     ) -> None:
         self._cfg = app_cfg
         self._bus = event_bus
         self._locks = locks
         self._task_source = task_source
         self._bridge = approval_bridge
+        self._batch_store = batch_store
         self.events_published: int = 0
+
+    @property
+    def locks(self) -> DaemonLocks:
+        """Expose locks for scheduler/API coordination."""
+        return self._locks
 
     def run_task(
         self,
@@ -69,9 +78,7 @@ class WorkflowRunner:
         :attr:`locks` for the scheduler/orchestrator to acquire around the
         call (Phase 4); this method itself stays synchronous.
         """
-        # TODO(Phase 4): acquire locks.task_run() around the graph.invoke call
-        # so task runs coordinate with EOD-publish. Phase 1 ships the lock
-        # unused; max_instances=1 on the APScheduler job is the only guard.
+        # Concurrency: relies on APScheduler max_instances=1; no cross-loop lock (see HANDOFF.md).
         topic = f"task.{task_id}"
 
         self._publish(
@@ -111,6 +118,15 @@ class WorkflowRunner:
                     "verdict": verdict.value if verdict else None,
                 },
             )
+            # In end_of_day mode, accumulate the result into the batch store.
+            if (
+                self._batch_store is not None
+                and self._cfg.workflow.hitl_strategy == HitlStrategy.END_OF_DAY
+            ):
+                try:
+                    self._store_batch_entry(task_id, final_state)
+                except Exception:
+                    logger.exception("Failed to store batch entry for task %s", task_id)
             return final_state
         except Exception:
             logger.exception("Workflow run failed for task %s", task_id)
@@ -152,6 +168,46 @@ class WorkflowRunner:
         finally:
             if self._task_source is None:
                 source.close()
+
+    def _store_batch_entry(self, task_id: str, state: WorkflowState) -> int:
+        """Build a ``BatchEntry`` from ``state`` and persist it.
+
+        Called after each per-task run in end_of_day mode. Reads the
+        reporter artifacts (always populated by ``reporter_node``), the
+        plan, diff, checker reports, and branch from the final state.
+        """
+        from datetime import UTC, datetime
+
+        assert self._batch_store is not None
+
+        task = state.get("task")
+        artifacts = state.get("reporter_artifacts")
+        if task is None or artifacts is None:
+            logger.warning(
+                "Cannot store batch entry for %s: missing task or artifacts",
+                task_id,
+            )
+            return -1
+
+        plan = state.get("plan")
+        plan_steps = [s.description for s in plan.steps] if plan else []
+        plan_summary = plan.summary if plan else ""
+
+        entry = BatchEntry(
+            task_id=task.id,
+            task_title=task.title,
+            branch_name=state.get("branch_name") or "",
+            worktree_path=state.get("worktree_path") or "",
+            diff=state.get("diff") or "",
+            plan_summary=plan_summary,
+            plan_steps=plan_steps,
+            checker_reports=state.get("checker_reports") or [],
+            self_review_notes=state.get("self_review_notes") or "",
+            final_verdict=state.get("final_verdict"),
+            reporter_artifacts=artifacts,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        return self._batch_store.add(entry)
 
     def _publish(self, topic: str, data: dict[str, Any]) -> None:
         """Publish an event, tracking count for diagnostics.

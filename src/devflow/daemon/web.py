@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from devflow.batch.eod_handler import EodHandler
 from devflow.config import Config
 from devflow.daemon.approval_store import ApprovalStore
 from devflow.daemon.events import EventBus
@@ -48,12 +49,19 @@ class ApprovalDecision(BaseModel):
     requested_changes: list[str] = Field(default_factory=list)
 
 
+class EodPublishRequest(BaseModel):
+    """Body of POST /api/eod/publish."""
+
+    task_ids: list[str] = Field(default_factory=list)
+
+
 def create_app(
     app_cfg: Config,
     locks: DaemonLocks,
     event_bus: EventBus,
     runner: Any | None = None,
     approval_store: ApprovalStore | None = None,
+    eod_handler: EodHandler | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -64,6 +72,10 @@ def create_app(
     When provided, this exposes ``GET /api/approvals`` and
     ``POST /api/approvals/{thread_id}``, and populates ``pending_approvals``
     in ``GET /api/health``.
+
+    ``eod_handler`` is the EOD batch review/publish orchestrator (Task 5).
+    When provided, this exposes the ``/api/eod*`` endpoints and populates
+    ``batch_store_pending`` in ``GET /api/health``.
     """
     app = FastAPI(title="devflow-daemon", version="0.1.0")
     start_time = time.monotonic()
@@ -84,12 +96,19 @@ def create_app(
         uptime = int(time.monotonic() - start_time)
         task_running = _is_task_running()
         pending = len(approval_store.get_pending()) if approval_store else 0
+        batch_pending = 0
+        if eod_handler is not None:
+            try:
+                batch_pending = eod_handler._store.count_pending()  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("Failed to count pending batch entries")
         return HealthResponse(
             status="degraded" if task_running else "healthy",
             scheduler="busy" if task_running else "running",
             uptime_seconds=uptime,
             current_task=_state.get("current_task"),
             pending_approvals=pending,
+            batch_store_pending=batch_pending,
         )
 
     @app.get("/api/state", response_model=StateResponse)
@@ -130,6 +149,39 @@ def create_app(
                 )
             return {"status": "resolved", "thread_id": thread_id}
 
+    if eod_handler is not None:
+
+        def _entry_summary(entry: Any) -> dict[str, Any]:
+            return {
+                "id": entry.id,
+                "task_id": entry.task_id,
+                "task_title": entry.task_title,
+                "branch_name": entry.branch_name,
+                "final_verdict": entry.final_verdict.value if entry.final_verdict else None,
+                "status": entry.status,
+                "created_at": entry.created_at,
+            }
+
+        @app.get("/api/eod")
+        async def list_eod_pending() -> list[dict[str, Any]]:
+            return [_entry_summary(e) for e in eod_handler.list_pending()]
+
+        @app.post("/api/eod/finalize")
+        async def finalize_eod() -> dict[str, Any]:
+            pending = eod_handler.finalize()
+            return {"pending_count": len(pending)}
+
+        @app.post("/api/eod/publish")
+        async def publish_eod(req: EodPublishRequest) -> dict[str, Any]:
+            return eod_handler.publish_selected(req.task_ids)
+
+        @app.get("/api/eod/entries/{entry_id}")
+        async def get_eod_entry(entry_id: int) -> dict[str, Any]:
+            entry = eod_handler._store.get_entry(entry_id)  # type: ignore[attr-defined]
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"Unknown entry id: {entry_id}")
+            return entry.model_dump(mode="json")
+
     def set_current_task(task_id: str | None) -> None:
         """Allow the runner to report which task is currently active."""
         _state["current_task"] = task_id
@@ -146,14 +198,21 @@ def run_web_server(
     event_bus: EventBus,
     runner: Any | None = None,
     approval_store: ApprovalStore | None = None,
+    eod_handler: EodHandler | None = None,
 ) -> None:
     """Run the uvicorn server (blocking). Called from the daemon entry point.
 
     ``approval_store`` (Task 4) is forwarded to ``create_app`` so the
     ``/api/approvals`` endpoints can be exposed when the daemon wires it in.
+
+    ``eod_handler`` (Task 5) is forwarded so the ``/api/eod*`` endpoints
+    can be exposed when the daemon wires it in.
     """
     import uvicorn
 
-    app = create_app(app_cfg, locks, event_bus, runner, approval_store=approval_store)
+    app = create_app(
+        app_cfg, locks, event_bus, runner,
+        approval_store=approval_store, eod_handler=eod_handler,
+    )
     port = app_cfg.workflow.daemon.port
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

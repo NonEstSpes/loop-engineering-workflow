@@ -160,3 +160,174 @@ def test_health_shows_pending_approvals_count() -> None:
         resp = client.get("/api/health")
     data = resp.json()
     assert data["pending_approvals"] == 2
+
+
+def test_eod_routes_list_pending(
+    mock_config: Config, tmp_path
+) -> None:
+    """GET /api/eod returns pending entries when eod_handler is set."""
+    from fastapi.testclient import TestClient
+
+    from devflow.batch.eod_handler import EodHandler
+    from devflow.batch.models import BatchEntry
+    from devflow.batch.store import BatchStore
+    from devflow.daemon.events import EventBus
+    from devflow.daemon.locks import DaemonLocks
+    from devflow.daemon.web import create_app
+    from devflow.schemas import ReporterResponse
+    from devflow.state import FinalVerdict
+
+    store = BatchStore(tmp_path / "batch_store.db")
+    store.add(
+        BatchEntry(
+            task_id="T-1",
+            task_title="Task 1",
+            branch_name="devflow/T-1/abc",
+            worktree_path="/p",
+            diff="d",
+            plan_summary="s",
+            plan_steps=[],
+            checker_reports=[],
+            self_review_notes="",
+            final_verdict=FinalVerdict.APPROVE,
+            reporter_artifacts=ReporterResponse(
+                pr_title="t", pr_description="d", corporate_report="r", commit_message="c"
+            ),
+            created_at="2026-07-13T10:00:00Z",
+        )
+    )
+    handler = EodHandler(mock_config, store, EventBus(), repo_path=".")
+    app = create_app(
+        mock_config, DaemonLocks(), EventBus(), eod_handler=handler
+    )
+    client = TestClient(app)
+    resp = client.get("/api/eod")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["task_id"] == "T-1"
+    store.close()
+
+
+def test_eod_publish_route(
+    mock_config: Config, tmp_path, monkeypatch
+) -> None:
+    """POST /api/eod/publish publishes selected entries."""
+    from fastapi.testclient import TestClient
+
+    from devflow.batch.eod_handler import EodHandler
+    from devflow.batch.models import BatchEntry
+    from devflow.batch.store import BatchStore
+    from devflow.daemon.events import EventBus
+    from devflow.daemon.locks import DaemonLocks
+    from devflow.daemon.web import create_app
+    from devflow.schemas import ReporterResponse
+    from devflow.state import FinalVerdict
+
+    store = BatchStore(tmp_path / "batch_store.db")
+    store.add(
+        BatchEntry(
+            task_id="T-1",
+            task_title="Task 1",
+            branch_name="devflow/T-1/abc",
+            worktree_path="/p",
+            diff="d",
+            plan_summary="s",
+            plan_steps=[],
+            checker_reports=[],
+            self_review_notes="",
+            final_verdict=FinalVerdict.APPROVE,
+            reporter_artifacts=ReporterResponse(
+                pr_title="t", pr_description="d", corporate_report="r", commit_message="c"
+            ),
+            created_at="2026-07-13T10:00:00Z",
+        )
+    )
+    handler = EodHandler(mock_config, store, EventBus(), repo_path=".")
+
+    # Stub the publisher so no real forge/httpx calls happen.
+    class StubPublisher:
+        def publish(self, entry):
+            entry.status = "published"
+            return entry
+
+    monkeypatch.setattr(handler, "build_publisher", lambda: StubPublisher())
+
+    app = create_app(
+        mock_config, DaemonLocks(), EventBus(), eod_handler=handler
+    )
+    client = TestClient(app)
+    resp = client.post("/api/eod/publish", json={"task_ids": ["T-1"]})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["published"] == ["T-1"]
+    store.close()
+
+
+def test_eod_finalize_route(
+    mock_config: Config, tmp_path
+) -> None:
+    """POST /api/eod/finalize returns the pending count."""
+    from fastapi.testclient import TestClient
+
+    from devflow.batch.eod_handler import EodHandler
+    from devflow.batch.models import BatchEntry
+    from devflow.batch.store import BatchStore
+    from devflow.daemon.events import EventBus
+    from devflow.daemon.locks import DaemonLocks
+    from devflow.daemon.web import create_app
+    from devflow.schemas import ReporterResponse
+    from devflow.state import FinalVerdict
+
+    store = BatchStore(tmp_path / "batch_store.db")
+    store.add(
+        BatchEntry(
+            task_id="T-1",
+            task_title="t",
+            branch_name="b",
+            worktree_path="/p",
+            diff="d",
+            plan_summary="s",
+            plan_steps=[],
+            checker_reports=[],
+            self_review_notes="",
+            final_verdict=FinalVerdict.APPROVE,
+            reporter_artifacts=ReporterResponse(
+                pr_title="t", pr_description="d", corporate_report="r", commit_message="c"
+            ),
+            created_at="2026-07-13T10:00:00Z",
+        )
+    )
+    handler = EodHandler(mock_config, store, EventBus(), repo_path=".")
+    app = create_app(
+        mock_config, DaemonLocks(), EventBus(), eod_handler=handler
+    )
+    client = TestClient(app)
+    resp = client.post("/api/eod/finalize")
+    assert resp.status_code == 200
+    assert resp.json()["pending_count"] == 1
+    store.close()
+
+
+def test_health_includes_batch_store_pending(
+    mock_config: Config, tmp_path
+) -> None:
+    """GET /api/health reports batch_store_pending when eod_handler is set."""
+    from fastapi.testclient import TestClient
+
+    from devflow.batch.eod_handler import EodHandler
+    from devflow.batch.store import BatchStore
+    from devflow.daemon.events import EventBus
+    from devflow.daemon.locks import DaemonLocks
+    from devflow.daemon.web import create_app
+
+    store = BatchStore(tmp_path / "batch_store.db")
+    handler = EodHandler(mock_config, store, EventBus(), repo_path=".")
+    app = create_app(
+        mock_config, DaemonLocks(), EventBus(), eod_handler=handler
+    )
+    client = TestClient(app)
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json()["batch_store_pending"] == 0
+    store.close()

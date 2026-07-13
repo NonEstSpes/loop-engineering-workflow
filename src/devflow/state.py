@@ -7,7 +7,7 @@ from typing import Annotated, Any, TypedDict, TypeVar
 
 from pydantic import BaseModel, Field
 
-from devflow.schemas import Plan, ResearchRequest, ResearchResult
+from devflow.schemas import Plan, ReporterResponse, ResearchRequest, ResearchResult
 
 T = TypeVar("T")
 
@@ -153,6 +153,8 @@ class WorkflowState(TypedDict, total=False):
     mr_url: str | None
     pushed_sha: str | None
     report_url: str | None
+    # Reporter artifacts from prepare-only runs (end_of_day per-task).
+    reporter_artifacts: ReporterResponse | None
     error: WorkflowError | None
     logs: Annotated[list[str], _add_reducer]
 

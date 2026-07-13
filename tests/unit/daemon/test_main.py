@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from git import Repo
 
+from devflow.config import Config
 from devflow.daemon.__main__ import run_daemon
 
 
@@ -95,6 +97,7 @@ def test_run_daemon_wires_approval_store(
         event_bus: Any,
         runner: Any,
         approval_store: Any = None,
+        **kwargs: Any,
     ) -> None:
         captured["approval_store"] = approval_store
         captured["runner"] = runner
@@ -125,3 +128,39 @@ def test_run_daemon_exits_when_disabled(
     with pytest.raises(SystemExit) as exc_info:
         run_daemon(config_dir="config", repo_path=str(temp_git_repo))
     assert exc_info.value.code == 1
+
+
+def test_run_daemon_constructs_batch_store_in_end_of_day(
+    mock_config: Any,
+    temp_git_repo: Path,
+    fake_llm_factory: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_daemon constructs BatchStore + EodHandler and passes them through."""
+    mock_config.workflow.daemon.enabled = True
+    mock_config.workflow.hitl_strategy = "end_of_day"
+
+    constructed: dict[str, bool] = {}
+
+    def fake_load_config(_d: Any) -> Config:
+        return mock_config
+
+    def fake_run_web_server(*args: Any, **kwargs: Any) -> None:
+        constructed["eod_handler_passed"] = kwargs.get("eod_handler") is not None
+
+    monkeypatch.setattr("devflow.daemon.__main__.load_config", fake_load_config)
+    monkeypatch.setattr("devflow.daemon.__main__.cleanup_orphan_worktrees", lambda p: [])
+    monkeypatch.setattr("devflow.daemon.__main__.run_web_server", fake_run_web_server)
+    # Avoid actually starting the scheduler thread.
+    monkeypatch.setattr(
+        "devflow.daemon.__main__.DaemonScheduler",
+        lambda *a, **kw: MagicMock(
+            start=lambda: None,
+            register_jobs=lambda p: None,
+            shutdown=lambda: None,
+        ),
+    )
+
+    run_daemon(config_dir="config", repo_path=str(temp_git_repo))
+
+    assert constructed["eod_handler_passed"] is True
