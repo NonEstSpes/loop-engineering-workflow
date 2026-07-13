@@ -7,8 +7,10 @@ tasks with:
 - a synchronous boundary — the daemon's scheduler calls these from a
   thread, and the graph itself is synchronous.
 
-Phase 1 uses ``run_workflow`` (non-interactive). Phase 2 will switch to
-``run_workflow_interactive`` with an approval-bridge callback.
+When an ``ApprovalBridge`` is provided, ``run_task`` uses
+``run_workflow_interactive`` (resuming from human-approval interrupts via
+the bridge's callback). Without a bridge, it falls back to the
+non-interactive ``run_workflow``.
 """
 
 from __future__ import annotations
@@ -19,9 +21,10 @@ import traceback
 from typing import Any
 
 from devflow.config import Config
+from devflow.daemon.approval_bridge import ApprovalBridge
 from devflow.daemon.events import EventBus
 from devflow.daemon.locks import DaemonLocks
-from devflow.graph import run_workflow
+from devflow.graph import run_workflow, run_workflow_interactive
 from devflow.mcp.base import TaskSource
 from devflow.mcp.factory import build_task_source
 from devflow.state import WorkflowState
@@ -38,11 +41,13 @@ class WorkflowRunner:
         event_bus: EventBus,
         locks: DaemonLocks,
         task_source: TaskSource | None = None,
+        approval_bridge: ApprovalBridge | None = None,
     ) -> None:
         self._cfg = app_cfg
         self._bus = event_bus
         self._locks = locks
         self._task_source = task_source
+        self._bridge = approval_bridge
         self.events_published: int = 0
 
     def run_task(
@@ -51,7 +56,13 @@ class WorkflowRunner:
         repo_path: str,
         thread_id: str | None = None,
     ) -> WorkflowState:
-        """Run a single task to completion (non-interactive in Phase 1).
+        """Run a single task to completion.
+
+        When an ``ApprovalBridge`` was supplied to ``__init__``, the
+        interactive runner (``run_workflow_interactive``) is used so the
+        workflow can pause on human-approval interrupts and resume via the
+        bridge's callback. Otherwise the non-interactive ``run_workflow``
+        is used (any interrupt simply ends the run).
 
         Publishes a ``task.started`` event before invoking the graph and a
         ``task.finished`` event after. The ``task_run`` lock is exposed via
@@ -73,13 +84,24 @@ class WorkflowRunner:
         )
 
         try:
-            final_state = run_workflow(
-                app_cfg=self._cfg,
-                repo_path=repo_path,
-                task_id=task_id,
-                task_source=self._task_source,
-                thread_id=thread_id or task_id,
-            )
+            if self._bridge is not None:
+                callback = self._bridge.build_callback()
+                final_state = run_workflow_interactive(
+                    app_cfg=self._cfg,
+                    repo_path=repo_path,
+                    task_id=task_id,
+                    task_source=self._task_source,
+                    thread_id=thread_id or task_id,
+                    approval_callback=callback,
+                )
+            else:
+                final_state = run_workflow(
+                    app_cfg=self._cfg,
+                    repo_path=repo_path,
+                    task_id=task_id,
+                    task_source=self._task_source,
+                    thread_id=thread_id or task_id,
+                )
             verdict = final_state.get("final_verdict")
             self._publish(
                 topic,

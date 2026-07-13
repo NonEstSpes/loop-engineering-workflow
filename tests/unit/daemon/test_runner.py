@@ -90,3 +90,75 @@ def test_run_all_processes_multiple_tasks(
     assert len(results) == 2
     for state in results:
         assert state.get("final_verdict") is not None
+
+
+def test_run_task_uses_interactive_when_bridge_provided(
+    temp_git_repo: Path,
+    mock_config: Config,
+    fake_llm_factory: Any,
+) -> None:
+    """When an ApprovalBridge is provided, run_task uses run_workflow_interactive."""
+    import threading
+    import time
+
+    from devflow.daemon.approval_bridge import ApprovalBridge
+    from devflow.daemon.approval_store import ApprovalStore
+
+    # Enable per_plan so the plan_approval interrupt fires.
+    mock_config.workflow.hitl_strategy = "per_plan"
+    mock_config.workflow.human_in_the_loop = True
+
+    store = ApprovalStore()
+    bridge = ApprovalBridge(
+        store=store,
+        push_channels=[],
+        approval_timeout_hours=1,
+        on_timeout="defer",
+    )
+
+    bus = EventBus()
+    locks = DaemonLocks()
+    runner = WorkflowRunner(mock_config, bus, locks, approval_bridge=bridge)
+
+    # Auto-resolve the approval immediately in a background thread.
+    def auto_approve() -> None:
+        for _ in range(40):
+            pending = store.get_pending()
+            if pending:
+                tid = pending[0]["thread_id"]
+                store.resolve(
+                    tid,
+                    {"approved": True, "reason": "auto", "requested_changes": []},
+                )
+                return
+            time.sleep(0.05)
+
+    t = threading.Thread(target=auto_approve)
+    t.start()
+
+    final_state = runner.run_task(
+        task_id="MOCK-1",
+        repo_path=str(temp_git_repo),
+        thread_id="interactive-runner-test",
+    )
+    t.join(timeout=2.0)
+
+    assert final_state.get("final_verdict") == FinalVerdict.APPROVE
+
+
+def test_run_task_falls_back_to_non_interactive_without_bridge(
+    temp_git_repo: Path,
+    mock_config: Config,
+    fake_llm_factory: Any,
+) -> None:
+    """Without a bridge, run_task uses run_workflow (no interrupt)."""
+    bus = EventBus()
+    locks = DaemonLocks()
+    runner = WorkflowRunner(mock_config, bus, locks)
+
+    final_state = runner.run_task(
+        task_id="MOCK-1",
+        repo_path=str(temp_git_repo),
+        thread_id="non-interactive-test",
+    )
+    assert final_state.get("final_verdict") == FinalVerdict.APPROVE
