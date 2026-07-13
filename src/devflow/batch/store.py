@@ -22,7 +22,15 @@ class BatchStore:
     def __init__(self, db_path: str | Path) -> None:
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._path))
+        # ``check_same_thread=False`` because the store is shared across
+        # threads: the daemon creates it on the main thread, but the FastAPI
+        # request handlers (served by uvicorn/starlette's thread pool) and
+        # APScheduler's job threads also call into it. SQLite's default
+        # (``check_same_thread=True``) would raise ProgrammingError on the
+        # first cross-thread use. The store is not thread-safe by default
+        # (concurrent writes still need external locking, e.g. DaemonLocks),
+        # but the daemon's access pattern is serialized through those locks.
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._create_schema()
 
