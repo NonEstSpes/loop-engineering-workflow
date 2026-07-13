@@ -20,7 +20,9 @@ from devflow.utils.structured_llm import call_structured
 logger = logging.getLogger(__name__)
 
 
-def reporter_node(state: WorkflowState, *, app_cfg: Config) -> dict[str, Any]:
+def reporter_node(
+    state: WorkflowState, *, app_cfg: Config, prepare_only: bool = False
+) -> dict[str, Any]:
     """Generate PR description and corporate report; optionally publish them."""
     task = state.get("task")
     plan = state.get("plan")
@@ -86,6 +88,7 @@ Checker reports:
             verdict=verdict,
             report_text=report_text,
             branch=branch,
+            prepare_only=prepare_only,
         )
 
         logger.info("Reporter finished for task %s", task.id)
@@ -94,6 +97,7 @@ Checker reports:
             "mr_url": action_results.get("mr_url"),
             "pushed_sha": action_results.get("pushed_sha"),
             "report_url": action_results.get("report_url"),
+            "reporter_artifacts": response,
             "task": action_results.get("task", task),
             "logs": [
                 f"reporter: PR '{response.pr_title}'",
@@ -225,6 +229,7 @@ def _execute_actions(
     verdict: FinalVerdict | None,
     report_text: str,
     branch: str | None,
+    prepare_only: bool = False,
 ) -> dict[str, Any]:
     """Execute config-driven publication actions.
 
@@ -233,6 +238,11 @@ def _execute_actions(
     """
     forge_cfg = app_cfg.workflow.forge
     actions = forge_cfg.actions
+    # In prepare-only mode (end_of_day per-task), only record_todo runs
+    # locally. Publishing, tracker updates, push, and create_mr are deferred
+    # to the batch-publish stage.
+    if prepare_only:
+        actions = ["record_todo"] if "record_todo" in actions else []
     results: dict[str, Any] = {"action_logs": []}
     forge: Any = None
 

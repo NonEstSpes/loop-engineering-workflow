@@ -351,3 +351,98 @@ def test_reporter_pushes_when_action_enabled(
 
     assert len(pushed) == 1
     assert result.get("pushed_sha") == "sha-pushed"
+
+
+# ---------------------------------------------------------------------------
+# prepare-only mode (Task 3: end_of_day per-task)
+# ---------------------------------------------------------------------------
+
+
+def test_reporter_prepare_only_skips_publish_and_push(
+    base_state: WorkflowState,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prepare_only=True runs LLM + record_todo but skips publish/push/MR."""
+    mock_config.workflow.forge.provider = "github"
+    mock_config.workflow.forge.actions = [
+        "publish_report",
+        "update_tracker",
+        "record_todo",
+        "push",
+        "create_mr",
+    ]
+
+    push_called: list[bool] = []
+    mr_called: list[bool] = []
+    publish_called: list[bool] = []
+
+    class FakeForge:
+        name = "fake"
+
+        def push(self, branch, target, repo_path):
+            push_called.append(True)
+            return "sha-fake"
+
+        def create_mr(self, branch, target, title, description):
+            mr_called.append(True)
+            from devflow.forge.base import MRInfo
+            return MRInfo(url="https://fake/mr/1", number=1)
+
+        def healthcheck(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "devflow.nodes.reporter.build_forge_backend", lambda wf: FakeForge()
+    )
+    monkeypatch.setattr(
+        "devflow.nodes.reporter._publish_to_channels",
+        lambda cfg, msg: publish_called.append(True) or "console",
+    )
+
+    result = reporter_node(base_state, app_cfg=mock_config, prepare_only=True)
+
+    # Artifacts ARE generated.
+    artifacts = result.get("reporter_artifacts")
+    assert artifacts is not None
+    assert hasattr(artifacts, "pr_title")
+    # publish/push/MR are NOT executed.
+    assert push_called == []
+    assert mr_called == []
+    assert publish_called == []
+    assert result.get("pushed_sha") is None
+    assert result.get("mr_url") is None
+    assert result.get("report_url") is None
+
+
+def test_reporter_prepare_only_returns_artifacts(
+    base_state: WorkflowState,
+    mock_config: Config,
+) -> None:
+    """prepare_only=True returns the ReporterResponse in reporter_artifacts."""
+    result = reporter_node(base_state, app_cfg=mock_config, prepare_only=True)
+    artifacts = result.get("reporter_artifacts")
+    assert artifacts is not None
+    from devflow.schemas import ReporterResponse
+    assert isinstance(artifacts, ReporterResponse)
+    assert artifacts.pr_title  # non-empty
+
+
+def test_reporter_default_is_not_prepare_only(
+    base_state: WorkflowState,
+    mock_config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without prepare_only, publish_report still runs (default behavior)."""
+    publish_called: list[bool] = []
+    monkeypatch.setattr(
+        "devflow.nodes.reporter._publish_to_channels",
+        lambda cfg, msg: publish_called.append(True) or "console",
+    )
+
+    result = reporter_node(base_state, app_cfg=mock_config)
+    assert publish_called == [True]
+    assert result.get("report_url") == "console"
