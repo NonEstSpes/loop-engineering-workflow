@@ -62,6 +62,7 @@ class WorkflowConfig(BaseModel):
     # May be overridden by the DEVFLOW_HITL_STRATEGY env variable.
     hitl_strategy: str = "per_plan"
     daemon: DaemonConfig = Field(default_factory=lambda: DaemonConfig())
+    forge: ForgeConfig = Field(default_factory=lambda: ForgeConfig())
 
 
 class HitlStrategy:
@@ -83,6 +84,16 @@ class DaemonConfig(BaseModel):
     port: int = 8787
     approval_timeout_hours: int = 8
     approval_on_timeout: str = "defer"  # defer | reject
+
+
+class ForgeConfig(BaseModel):
+    """Configuration for the forge backend (GitHub/GitLab push + MR)."""
+
+    provider: str = "none"  # none | github | gitlab | auto
+    target_branch: str = "main"
+    actions: list[str] = Field(
+        default_factory=lambda: ["publish_report", "update_tracker", "record_todo"]
+    )
 
 
 class ResearchSourceConfig(BaseModel):
