@@ -145,10 +145,15 @@ def run_web_server(
     locks: DaemonLocks,
     event_bus: EventBus,
     runner: Any | None = None,
+    approval_store: ApprovalStore | None = None,
 ) -> None:
-    """Run the uvicorn server (blocking). Called from the daemon entry point."""
+    """Run the uvicorn server (blocking). Called from the daemon entry point.
+
+    ``approval_store`` (Task 4) is forwarded to ``create_app`` so the
+    ``/api/approvals`` endpoints can be exposed when the daemon wires it in.
+    """
     import uvicorn
 
-    app = create_app(app_cfg, locks, event_bus, runner)
+    app = create_app(app_cfg, locks, event_bus, runner, approval_store=approval_store)
     port = app_cfg.workflow.daemon.port
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

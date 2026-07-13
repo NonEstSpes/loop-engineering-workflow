@@ -15,12 +15,15 @@ import signal
 import sys
 
 from devflow.config import load_config
+from devflow.daemon.approval_bridge import ApprovalBridge
+from devflow.daemon.approval_store import ApprovalStore
 from devflow.daemon.events import EventBus
 from devflow.daemon.locks import DaemonLocks
 from devflow.daemon.runner import WorkflowRunner
 from devflow.daemon.scheduler import DaemonScheduler
 from devflow.daemon.sweep import cleanup_orphan_worktrees
 from devflow.daemon.web import run_web_server
+from devflow.notifications.factory import build_notification_channels
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,19 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     locks = DaemonLocks()
     runner = WorkflowRunner(app_cfg, event_bus, locks)
 
+    # 3b. Create approval store + bridge for HITL strategies.
+    approval_store = ApprovalStore()
+    push_channels = build_notification_channels(app_cfg.workflow)
+    bridge = ApprovalBridge(
+        store=approval_store,
+        push_channels=push_channels,
+        approval_timeout_hours=daemon_cfg.approval_timeout_hours,
+        on_timeout=daemon_cfg.approval_on_timeout,
+    )
+    # Recreate the runner with the bridge attached so run_task uses
+    # run_workflow_interactive (pausing on plan/publish approval interrupts).
+    runner = WorkflowRunner(app_cfg, event_bus, locks, approval_bridge=bridge)
+
     # 4. Create and start scheduler, register jobs.
     scheduler = DaemonScheduler(app_cfg, runner)
     scheduler.start()
@@ -74,7 +90,7 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     # is a best-effort bonus, not the primary shutdown path).
     logger.info("Starting web server on 127.0.0.1:%d", daemon_cfg.port)
     try:
-        run_web_server(app_cfg, locks, event_bus, runner)
+        run_web_server(app_cfg, locks, event_bus, runner, approval_store=approval_store)
     finally:
         logger.info("Web server stopped; shutting down scheduler...")
         scheduler.shutdown()
