@@ -59,6 +59,20 @@ class EodPublishRequest(BaseModel):
     task_ids: list[str] = Field(default_factory=list)
 
 
+class TaskCurrentResponse(BaseModel):
+    """Active task + current graph node (node is None until runner tracks it)."""
+
+    task_id: str | None = None
+    node: str | None = None
+
+
+class TaskQueueResponse(BaseModel):
+    """Pending task queue (introspection limited without a live task source)."""
+
+    queue: list[dict[str, Any]] = Field(default_factory=list)
+    note: str = ""
+
+
 def create_app(
     app_cfg: Config,
     locks: DaemonLocks,
@@ -131,6 +145,51 @@ def create_app(
             task_source=app_cfg.workflow.task_source,
         )
 
+    def _entry_summary(entry: Any) -> dict[str, Any]:
+        return {
+            "id": entry.id,
+            "task_id": entry.task_id,
+            "task_title": entry.task_title,
+            "branch_name": entry.branch_name,
+            "final_verdict": entry.final_verdict.value if entry.final_verdict else None,
+            "status": entry.status,
+            "created_at": entry.created_at,
+        }
+
+    @app.get("/api/tasks/current", response_model=TaskCurrentResponse)
+    async def tasks_current() -> TaskCurrentResponse:
+        return TaskCurrentResponse(
+            task_id=_state.get("current_task"),
+            node=None,
+        )
+
+    @app.get("/api/tasks/queue", response_model=TaskQueueResponse)
+    async def tasks_queue() -> TaskQueueResponse:
+        return TaskQueueResponse(
+            queue=[],
+            note="queue introspection not available without an active task source",
+        )
+
+    @app.get("/api/tasks/done")
+    async def tasks_done() -> list[dict[str, Any]]:
+        if eod_handler is None:
+            return []
+        try:
+            entries = eod_handler._store.list_all(status="published")  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - defensive
+            return []
+        return [_entry_summary(e) for e in entries]
+
+    @app.get("/api/tasks/{task_id}")
+    async def task_detail(task_id: str) -> dict[str, Any]:
+        if eod_handler is None:
+            raise HTTPException(status_code=404, detail="No batch store available")
+        entries = eod_handler._store.get_by_task(task_id)  # type: ignore[attr-defined]
+        if not entries:
+            raise HTTPException(status_code=404, detail=f"No entry for task {task_id}")
+        # Most recent entry (get_by_task returns oldest-first).
+        return entries[-1].model_dump(mode="json")
+
     @app.get("/api/events")
     async def event_stream() -> EventSourceResponse:
         """Server-Sent Events stream of all daemon events.
@@ -184,17 +243,6 @@ def create_app(
             return {"status": "resolved", "thread_id": thread_id}
 
     if eod_handler is not None:
-
-        def _entry_summary(entry: Any) -> dict[str, Any]:
-            return {
-                "id": entry.id,
-                "task_id": entry.task_id,
-                "task_title": entry.task_title,
-                "branch_name": entry.branch_name,
-                "final_verdict": entry.final_verdict.value if entry.final_verdict else None,
-                "status": entry.status,
-                "created_at": entry.created_at,
-            }
 
         @app.get("/api/eod")
         async def list_eod_pending() -> list[dict[str, Any]]:
