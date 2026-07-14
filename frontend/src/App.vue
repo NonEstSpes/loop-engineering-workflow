@@ -1,10 +1,25 @@
 <script setup lang="ts">
-// Root component — layout + nav added in Task 11.
+import { RouterLink, RouterView } from 'vue-router'
+import { useSSE } from '@/composables/useSSE'
+
+// Connect to the live event stream for the whole app.
+useSSE()
 </script>
 
 <template>
   <div id="devflow-app">
-    <h1>DevFlow Dashboard</h1>
-    <p>Scaffold OK. Routes and stores added in later tasks.</p>
+    <header>
+      <h1>DevFlow Dashboard</h1>
+      <nav>
+        <RouterLink to="/">Dashboard</RouterLink>
+        <span> · </span>
+        <RouterLink to="/approvals">Approvals</RouterLink>
+        <span> · </span>
+        <RouterLink to="/eod">EOD Review</RouterLink>
+      </nav>
+    </header>
+    <main>
+      <RouterView />
+    </main>
   </div>
 </template>
