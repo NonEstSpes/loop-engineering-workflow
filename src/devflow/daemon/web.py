@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -83,6 +84,7 @@ def create_app(
     runner: Any | None = None,
     approval_store: ApprovalStore | None = None,
     eod_handler: EodHandler | None = None,
+    scheduler: Any | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -101,6 +103,13 @@ def create_app(
     app = FastAPI(title="devflow-daemon", version="0.1.0")
     start_time = time.monotonic()
     _state: dict[str, Any] = {"current_task": None}
+
+    # Expose runner/scheduler/cfg on app.state so control endpoints can reach them.
+    app.state.runner = runner
+    app.state.scheduler = scheduler
+    app.state.cfg = app_cfg
+    # Cross-loop-safe (threading, not asyncio) mutex for on-demand runs.
+    app.state._run_lock = threading.Lock()
 
     # CORS: allow the Vite dev server origin(s) when configured.
     cors_origins = app_cfg.workflow.daemon.cors_origins
