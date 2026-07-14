@@ -9,17 +9,21 @@ Phase 2+ will add /api/approvals, /api/tasks/*, /api/eod, /api/events (SSE).
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from devflow.batch.eod_handler import EodHandler
 from devflow.config import Config
 from devflow.daemon.approval_store import ApprovalStore
-from devflow.daemon.events import EventBus
+from devflow.daemon.events import GLOBAL_TOPIC, EventBus
 from devflow.daemon.locks import DaemonLocks
 
 logger = logging.getLogger(__name__)
@@ -126,6 +130,36 @@ def create_app(
             },
             task_source=app_cfg.workflow.task_source,
         )
+
+    @app.get("/api/events")
+    async def event_stream() -> EventSourceResponse:
+        """Server-Sent Events stream of all daemon events.
+
+        Subscribes to the EventBus global topic and forwards each event as an
+        SSE frame (``event: <name>`` + ``data: <json>``). The client connects
+        via ``new EventSource('/api/events')``. A 15s ``ping`` heartbeat keeps
+        proxies/browsers from closing idle connections.
+        """
+        queue = await event_bus.subscribe(GLOBAL_TOPIC)
+
+        async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except TimeoutError:
+                        # Heartbeat keepalive (prevents proxy/browser timeouts).
+                        yield {"event": "ping", "data": "{}"}
+                        continue
+                    yield {
+                        "event": msg.get("event", "message"),
+                        "data": json.dumps(msg),
+                    }
+            finally:
+                # Best-effort cleanup of the subscriber queue.
+                pass
+
+        return EventSourceResponse(event_generator())
 
     if approval_store is not None:
 
