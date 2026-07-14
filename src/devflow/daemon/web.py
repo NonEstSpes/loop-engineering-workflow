@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -75,6 +76,21 @@ class TaskQueueResponse(BaseModel):
 
     queue: list[dict[str, Any]] = Field(default_factory=list)
     note: str = ""
+
+
+class RunTaskRequest(BaseModel):
+    """Body of POST /api/tasks/run."""
+
+    task_id: str | None = None
+    repo_path: str | None = None
+
+
+class RunTaskResponse(BaseModel):
+    """Response of POST /api/tasks/run."""
+
+    run_id: str
+    task_id: str | None = None
+    status: str
 
 
 def create_app(
@@ -213,6 +229,40 @@ def create_app(
         # Most recent entry (get_by_task returns oldest-first).
         return entries[-1].model_dump(mode="json")
 
+    @app.post("/api/tasks/run", response_model=RunTaskResponse, status_code=202)
+    async def run_task(req: RunTaskRequest) -> RunTaskResponse:
+        """Trigger a workflow run on demand.
+
+        If ``task_id`` is provided, runs that specific task; otherwise runs
+        the next task(s) by priority (``runner.run_all``). The run executes
+        in a background thread so the response returns immediately.
+        Returns ``409`` if a task is already running.
+        """
+        run_lock = app.state._run_lock  # type: ignore[attr-defined]
+        runner = app.state.runner  # type: ignore[attr-defined]
+        if runner is None:
+            raise HTTPException(status_code=503, detail="No runner configured")
+        if not run_lock.acquire(blocking=False):
+            current = _state.get("current_task")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task already running: {current or 'unknown'}",
+            )
+
+        repo = req.repo_path or "."
+        run_id = str(uuid.uuid4())
+
+        async def _run_in_background() -> None:
+            try:
+                await asyncio.to_thread(_execute_run, runner, req.task_id, repo)
+            finally:
+                run_lock.release()
+
+        asyncio.create_task(_run_in_background())
+        return RunTaskResponse(
+            run_id=run_id, task_id=req.task_id, status="started"
+        )
+
     @app.get("/api/events")
     async def event_stream() -> EventSourceResponse:
         """Server-Sent Events stream of all daemon events.
@@ -343,6 +393,21 @@ def create_app(
             )
 
     return app
+
+
+def _execute_run(runner: Any, task_id: str | None, repo_path: str) -> None:
+    """Synchronous run wrapper called in a background thread.
+
+    Calls ``runner.run_task`` (specific task) or ``runner.run_all`` (next
+    by priority). Exceptions are logged; the lock is released by the caller.
+    """
+    try:
+        if task_id:
+            runner.run_task(task_id=task_id, repo_path=repo_path)
+        else:
+            runner.run_all(repo_path=repo_path)
+    except Exception:
+        logger.exception("On-demand run failed (task_id=%s)", task_id)
 
 
 def run_web_server(
