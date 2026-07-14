@@ -91,3 +91,20 @@ async def test_specific_topic_still_works_alongside_global() -> None:
     g2 = await asyncio.wait_for(global_q.get(), timeout=1.0)
     assert {g1["task_id"], g2["task_id"]} == {"1", "2"}
     await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_removes_queue() -> None:
+    """unsubscribe() removes the queue so it stops receiving events."""
+    bus = EventBus()
+    queue = await bus.subscribe(GLOBAL_TOPIC)
+    await bus.publish(GLOBAL_TOPIC, {"event": "e1"})
+    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+    assert msg["event"] == "e1"
+
+    await bus.unsubscribe(GLOBAL_TOPIC, queue)
+    await bus.publish(GLOBAL_TOPIC, {"event": "e2"})  # should not reach queue
+    # queue should be empty (no new message). Use wait_for with short timeout.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(queue.get(), timeout=0.1)
+    await bus.close()

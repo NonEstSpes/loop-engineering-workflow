@@ -229,8 +229,9 @@ def create_app(
                         "data": json.dumps(msg),
                     }
             finally:
-                # Best-effort cleanup of the subscriber queue.
-                pass
+                # Remove this subscriber's queue on disconnect so the EventBus
+                # does not accumulate dead queues (one per reconnect).
+                await event_bus.unsubscribe(GLOBAL_TOPIC, queue)
 
         return EventSourceResponse(event_generator())
 
@@ -290,7 +291,9 @@ def create_app(
     # endpoints; the handler additionally 404s any path starting with "api".
     daemon_cfg = app_cfg.workflow.daemon
     if daemon_cfg.serve_frontend:
-        dist_path = daemon_cfg.frontend_dist
+        # Normalize + absolutize dist_path once so the containment check in
+        # spa_fallback is reliable (commonpath needs canonical, absolute paths).
+        dist_path = os.path.abspath(os.path.normpath(daemon_cfg.frontend_dist))
         index_file = os.path.join(dist_path, "index.html")
         if os.path.isdir(dist_path) and os.path.isfile(index_file):
             from fastapi.staticfiles import StaticFiles
@@ -306,10 +309,20 @@ def create_app(
                 # Never intercept API routes.
                 if full_path.startswith("api"):
                     raise HTTPException(status_code=404)
-                # Serve a specific static file if it exists, else index.html.
-                candidate = os.path.join(dist_path, full_path)
-                if full_path and os.path.isfile(candidate):
-                    return FileResponse(candidate)
+                # Serve a specific static file if it exists (and is under dist),
+                # else index.html.
+                if full_path:
+                    candidate = os.path.abspath(
+                        os.path.normpath(os.path.join(dist_path, full_path))
+                    )
+                    # Containment check: prevent path traversal (e.g.
+                    # %2e%2e-encoded ".." escapes that os.path.join would
+                    # follow). Reject the request explicitly rather than leaking
+                    # a file or serving the SPA shell.
+                    if os.path.commonpath([candidate, dist_path]) != dist_path:
+                        raise HTTPException(status_code=404)
+                    if os.path.isfile(candidate):
+                        return FileResponse(candidate)
                 return FileResponse(index_file)
 
             logger.info("Serving frontend SPA from %s", dist_path)

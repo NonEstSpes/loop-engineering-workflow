@@ -76,3 +76,25 @@ def test_spa_fallback_serves_index_for_unknown_paths(mock_config: Config, tmp_pa
     resp = client.get("/some/spa/route")
     assert resp.status_code == 200
     assert "SPA fallback" in resp.text
+
+
+def test_spa_fallback_rejects_path_traversal(mock_config: Config, tmp_path) -> None:
+    """URL-encoded '..' cannot escape the dist directory."""
+    # dist with index.html; secret placed in tmp_path (dist's parent).
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>SPA</html>", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET", encoding="utf-8")
+
+    mock_config.workflow.daemon.serve_frontend = True
+    mock_config.workflow.daemon.frontend_dist = str(dist)
+    app = create_app(mock_config, DaemonLocks(), EventBus())
+    client = TestClient(app)
+
+    # URL-encoded .. — must NOT leak the secret. `..` from dist/ (= tmp_path/dist)
+    # resolves to tmp_path/secret.txt if not guarded, so this exercises the
+    # containment check.
+    resp = client.get("/%2e%2e/secret.txt")
+    assert resp.status_code == 404
+    assert "TOP SECRET" not in resp.text

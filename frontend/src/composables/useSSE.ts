@@ -1,7 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useDaemonStore } from '@/stores/daemon'
 import { useTasksStore } from '@/stores/tasks'
-import { useApprovalsStore } from '@/stores/approvals'
 import { useEodStore } from '@/stores/eod'
 
 /**
@@ -11,7 +10,6 @@ import { useEodStore } from '@/stores/eod'
 export function useSSE() {
   const daemon = useDaemonStore()
   const tasks = useTasksStore()
-  const approvals = useApprovalsStore()
   const eod = useEodStore()
 
   let source: EventSource | null = null
@@ -34,9 +32,9 @@ export function useSSE() {
     source.addEventListener('eod.ready', () => {
       void eod.fetch()
     })
-    source.addEventListener('approval.waiting', () => {
-      void approvals.fetch()
-    })
+    // NOTE: 'approval.waiting' is not yet emitted by the backend (ApprovalBridge
+    // does not publish to EventBus on register). Approvals are poll-only
+    // (ApprovalsView polls every 4s) until that emission is added.
 
     source.onerror = () => {
       source?.close()

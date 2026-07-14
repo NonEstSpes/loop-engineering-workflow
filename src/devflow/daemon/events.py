@@ -56,6 +56,18 @@ class EventBus:
             except asyncio.QueueFull:
                 logger.warning("EventBus queue full for topic '%s'; dropping message", topic)
 
+    async def unsubscribe(self, topic: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        """Remove a subscriber queue so publishes stop delivering to it.
+
+        Called when an SSE client disconnects; prevents unbounded queue
+        accumulation (each reconnect left a dead queue before).
+        """
+        subs = self._subscribers.get(topic, [])
+        # Filter out the queue (identity comparison — there may be duplicates).
+        self._subscribers[topic] = [q for q in subs if q is not queue]
+        if not self._subscribers[topic]:
+            del self._subscribers[topic]
+
     async def close(self) -> None:
         """Clear all subscribers. Queues are abandoned (callers should stop reading)."""
         self._subscribers.clear()
