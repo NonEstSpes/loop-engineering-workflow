@@ -13,12 +13,16 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
+import frontmatter
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -26,10 +30,12 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from devflow.batch.eod_handler import EodHandler
-from devflow.config import Config
+from devflow.config import Config, HitlStrategy
 from devflow.daemon.approval_store import ApprovalStore
 from devflow.daemon.events import GLOBAL_TOPIC, EventBus
 from devflow.daemon.locks import DaemonLocks
+from devflow.daemon.todo_api import rewrite_todo_line, serialize_todo
+from devflow.todo import parse_todo
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,32 @@ class RunTaskResponse(BaseModel):
     run_id: str
     task_id: str | None = None
     status: str
+
+
+class TodoPatchRequest(BaseModel):
+    """Body of PATCH /api/todo/{line_no}."""
+
+    priority: int | None = None
+    status: str | None = None
+
+
+class ConfigPatchRequest(BaseModel):
+    """Body of PATCH /api/config. All fields optional."""
+
+    hitl_strategy: str | None = None
+    daemon: dict[str, Any] | None = None
+
+
+class HitlSwitchRequest(BaseModel):
+    """Body of PUT /api/config/hitl."""
+
+    strategy: str
+
+
+class AgentPromptUpdate(BaseModel):
+    """Body of PUT /api/agents/{name}/prompt."""
+
+    system_prompt: str
 
 
 def create_app(
@@ -262,6 +294,294 @@ def create_app(
         return RunTaskResponse(
             run_id=run_id, task_id=req.task_id, status="started"
         )
+
+    # -------------------------------------------------------------------
+    # Control: TODO management
+    # -------------------------------------------------------------------
+
+    @app.get("/api/todo")
+    async def list_todo() -> list[dict[str, Any]]:
+        """List all TODO.md entries (re-read from disk each call)."""
+        todo_path = Path(app_cfg.workflow.todo_path)
+        items = parse_todo(todo_path)
+        return serialize_todo(items)
+
+    @app.patch("/api/todo/{line_no}")
+    async def patch_todo(line_no: int, req: TodoPatchRequest) -> dict[str, Any]:
+        """Update a single TODO line's priority and/or status (atomic disk write)."""
+        todo_path = Path(app_cfg.workflow.todo_path)
+        try:
+            return rewrite_todo_line(
+                todo_path, line_no,
+                priority=req.priority, status=req.status,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if "not found" in msg or "not a task" in msg:
+                raise HTTPException(status_code=404, detail=msg) from exc
+            raise HTTPException(status_code=422, detail=msg) from exc
+
+    # -------------------------------------------------------------------
+    # Control: config management
+    # -------------------------------------------------------------------
+
+    _RESTART_ONLY_DAEMON_FIELDS = {"port", "serve_frontend", "frontend_dist"}
+
+    def _config_view() -> dict[str, Any]:
+        """Serialize the current in-memory config into a JSON view."""
+        d = app_cfg.workflow.daemon
+        return {
+            "task_source": app_cfg.workflow.task_source,
+            "hitl_strategy": app_cfg.workflow.hitl_strategy,
+            "todo_path": app_cfg.workflow.todo_path,
+            "human_in_the_loop": app_cfg.workflow.human_in_the_loop,
+            "daemon": {
+                "enabled": d.enabled,
+                "task_schedule": d.task_schedule,
+                "eod_schedule": d.eod_schedule,
+                "port": d.port,
+                "approval_timeout_hours": d.approval_timeout_hours,
+                "approval_on_timeout": d.approval_on_timeout,
+                "serve_frontend": d.serve_frontend,
+                "frontend_dist": d.frontend_dist,
+            },
+            "forge": {
+                "provider": app_cfg.workflow.forge.provider,
+                "target_branch": app_cfg.workflow.forge.target_branch,
+                "actions": app_cfg.workflow.forge.actions,
+            },
+        }
+
+    @app.get("/api/config")
+    async def get_config() -> dict[str, Any]:
+        return _config_view()
+
+    @app.patch("/api/config")
+    async def patch_config(req: ConfigPatchRequest) -> dict[str, Any]:
+        """Mutate in-memory config. Schedule changes trigger scheduler.reschedule."""
+        if req.hitl_strategy is not None:
+            if req.hitl_strategy not in HitlStrategy.ALL:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid hitl_strategy: {req.hitl_strategy}",
+                )
+            app_cfg.workflow.hitl_strategy = req.hitl_strategy
+
+        if req.daemon:
+            for key in req.daemon:
+                if key in _RESTART_ONLY_DAEMON_FIELDS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Field '{key}' requires daemon restart",
+                    )
+            sched_obj = app.state.scheduler
+            if "task_schedule" in req.daemon or "eod_schedule" in req.daemon:
+                if sched_obj is not None:
+                    try:
+                        sched_obj.reschedule(
+                            task_schedule=req.daemon.get("task_schedule"),
+                            eod_schedule=req.daemon.get("eod_schedule"),
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=422, detail=str(exc)
+                        ) from exc
+                else:
+                    if "task_schedule" in req.daemon:
+                        app_cfg.workflow.daemon.task_schedule = req.daemon["task_schedule"]
+                    if "eod_schedule" in req.daemon:
+                        app_cfg.workflow.daemon.eod_schedule = req.daemon["eod_schedule"]
+            if "approval_timeout_hours" in req.daemon:
+                app_cfg.workflow.daemon.approval_timeout_hours = req.daemon["approval_timeout_hours"]
+            if "approval_on_timeout" in req.daemon:
+                app_cfg.workflow.daemon.approval_on_timeout = req.daemon["approval_on_timeout"]
+
+        return _config_view()
+
+    @app.get("/api/config/diff")
+    async def config_diff() -> dict[str, Any]:
+        """Compare in-memory config to the workflow.yaml on disk."""
+        from devflow.config import load_workflow_config
+
+        config_dir = getattr(app.state, "config_dir", "config")
+        disk_path = Path(config_dir) / "workflow.yaml"
+        if not disk_path.exists():
+            return {"changed": [], "clean": False, "note": "workflow.yaml not found"}
+        try:
+            disk_cfg = load_workflow_config(disk_path)
+        except Exception as exc:
+            return {"changed": [], "clean": False, "note": str(exc)}
+
+        current = _config_view()
+        disk_view = {
+            "task_source": disk_cfg.task_source,
+            "hitl_strategy": disk_cfg.hitl_strategy,
+            "todo_path": disk_cfg.todo_path,
+            "human_in_the_loop": disk_cfg.human_in_the_loop,
+            "daemon": {
+                "task_schedule": disk_cfg.daemon.task_schedule,
+                "eod_schedule": disk_cfg.daemon.eod_schedule,
+                "approval_timeout_hours": disk_cfg.daemon.approval_timeout_hours,
+                "approval_on_timeout": disk_cfg.daemon.approval_on_timeout,
+            },
+        }
+        changed: list[dict[str, Any]] = []
+        for field, disk_val in disk_view.items():
+            if field == "daemon":
+                for dk, dv in disk_val.items():
+                    cv = current["daemon"][dk]
+                    if cv != dv:
+                        changed.append({"field": f"daemon.{dk}", "in_memory": cv, "on_disk": dv})
+            elif current.get(field) != disk_val:
+                changed.append({"field": field, "in_memory": current.get(field), "on_disk": disk_val})
+        return {"changed": changed, "clean": len(changed) == 0}
+
+    @app.post("/api/config/save")
+    async def save_config() -> dict[str, Any]:
+        """Persist the current in-memory config to workflow.yaml (atomic)."""
+        config_dir = getattr(app.state, "config_dir", "config")
+        wf_path = Path(config_dir) / "workflow.yaml"
+        data = {
+            "task_source": app_cfg.workflow.task_source,
+            "max_rework_iterations": app_cfg.workflow.max_rework_iterations,
+            "human_in_the_loop": app_cfg.workflow.human_in_the_loop,
+            "default_branch": app_cfg.workflow.default_branch,
+            "pr_target_branch": app_cfg.workflow.pr_target_branch,
+            "corporate_report_channels": app_cfg.workflow.corporate_report_channels,
+            "todo_path": app_cfg.workflow.todo_path,
+            "hitl_strategy": app_cfg.workflow.hitl_strategy,
+            "daemon": {
+                "enabled": app_cfg.workflow.daemon.enabled,
+                "task_schedule": app_cfg.workflow.daemon.task_schedule,
+                "eod_schedule": app_cfg.workflow.daemon.eod_schedule,
+                "port": app_cfg.workflow.daemon.port,
+                "approval_timeout_hours": app_cfg.workflow.daemon.approval_timeout_hours,
+                "approval_on_timeout": app_cfg.workflow.daemon.approval_on_timeout,
+                "serve_frontend": app_cfg.workflow.daemon.serve_frontend,
+                "frontend_dist": app_cfg.workflow.daemon.frontend_dist,
+            },
+            "forge": {
+                "provider": app_cfg.workflow.forge.provider,
+                "target_branch": app_cfg.workflow.forge.target_branch,
+                "actions": app_cfg.workflow.forge.actions,
+            },
+        }
+        content = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        dir_ = wf_path.parent
+        fd, tmp_name = tempfile.mkstemp(dir=str(dir_), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_name, wf_path)
+        except Exception as exc:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise HTTPException(status_code=500, detail=f"Failed to persist: {exc}") from exc
+        return {"path": str(wf_path)}
+
+    # -------------------------------------------------------------------
+    # Control: HITL strategy switch
+    # -------------------------------------------------------------------
+
+    @app.put("/api/config/hitl")
+    async def switch_hitl(req: HitlSwitchRequest) -> dict[str, Any]:
+        """Switch the HITL strategy at runtime + re-evaluate the EOD cron job."""
+        if req.strategy not in HitlStrategy.ALL:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid strategy: {req.strategy}. Must be one of {sorted(HitlStrategy.ALL)}",
+            )
+        old = app_cfg.workflow.hitl_strategy
+        app_cfg.workflow.hitl_strategy = req.strategy
+
+        sched_obj = app.state.scheduler
+        if sched_obj is not None:
+            should_enable_eod = req.strategy == HitlStrategy.END_OF_DAY
+            was_end_of_day = old == HitlStrategy.END_OF_DAY
+            if should_enable_eod != was_end_of_day:
+                sched_obj.set_eod_job(enabled=should_enable_eod, repo_path=".")
+        logger.info("HITL strategy switched: %s -> %s", old, req.strategy)
+        return {"strategy": req.strategy, "previous": old}
+
+    # -------------------------------------------------------------------
+    # Control: agent prompts
+    # -------------------------------------------------------------------
+
+    @app.get("/api/agents")
+    async def list_agents() -> list[dict[str, Any]]:
+        return [
+            {
+                "name": a.name,
+                "provider": a.provider,
+                "model": a.model,
+                "temperature": a.temperature,
+                "has_prompt": bool(a.system_prompt),
+            }
+            for a in app_cfg.agents.values()
+        ]
+
+    @app.get("/api/agents/{name}")
+    async def get_agent(name: str) -> dict[str, Any]:
+        a = app_cfg.agents.get(name)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"Unknown agent: {name}")
+        return {
+            "name": a.name,
+            "provider": a.provider,
+            "model": a.model,
+            "temperature": a.temperature,
+            "system_prompt": a.system_prompt,
+            "skills": a.skills,
+            "tools": a.tools,
+            "auto_approve": a.auto_approve,
+        }
+
+    @app.put("/api/agents/{name}/prompt")
+    async def update_agent_prompt(name: str, req: AgentPromptUpdate) -> dict[str, Any]:
+        a = app_cfg.agents.get(name)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"Unknown agent: {name}")
+        a.system_prompt = req.system_prompt  # in-memory, instant effect on next run
+        logger.info("Agent prompt updated in-memory: %s", name)
+        return {"name": name, "status": "updated"}
+
+    @app.post("/api/agents/{name}/save")
+    async def save_agent(name: str) -> dict[str, Any]:
+        a = app_cfg.agents.get(name)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"Unknown agent: {name}")
+        config_dir = getattr(app.state, "config_dir", "config")
+        agents_dir = Path(config_dir) / "agents"
+        agent_path = agents_dir / f"{name}.md"
+        post = frontmatter.Post(a.system_prompt.lstrip("\n"))
+        post.metadata = {
+            "name": a.name,
+            "provider": a.provider,
+            "model": a.model,
+            "temperature": a.temperature,
+        }
+        if a.auto_approve:
+            post.metadata["auto_approve"] = True
+        if a.skills:
+            post.metadata["skills"] = a.skills
+        if a.tools:
+            post.metadata["tools"] = a.tools
+        content = frontmatter.dumps(post)
+        dir_ = agent_path.parent
+        fd, tmp_name = tempfile.mkstemp(dir=str(dir_), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_name, agent_path)
+        except Exception as exc:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise HTTPException(status_code=500, detail=f"Failed to persist: {exc}") from exc
+        return {"path": str(agent_path)}
 
     @app.get("/api/events")
     async def event_stream() -> EventSourceResponse:
