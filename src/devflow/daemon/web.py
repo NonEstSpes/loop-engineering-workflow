@@ -17,6 +17,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -98,6 +99,17 @@ def create_app(
     app = FastAPI(title="devflow-daemon", version="0.1.0")
     start_time = time.monotonic()
     _state: dict[str, Any] = {"current_task": None}
+
+    # CORS: allow the Vite dev server origin(s) when configured.
+    cors_origins = app_cfg.workflow.daemon.cors_origins
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def _is_task_running() -> bool:
         """Check if the task_run lock is currently held.
