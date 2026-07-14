@@ -330,6 +330,7 @@ def run_web_server(
     runner: Any | None = None,
     approval_store: ApprovalStore | None = None,
     eod_handler: EodHandler | None = None,
+    app: FastAPI | None = None,
 ) -> None:
     """Run the uvicorn server (blocking). Called from the daemon entry point.
 
@@ -338,12 +339,18 @@ def run_web_server(
 
     ``eod_handler`` (Task 5) is forwarded so the ``/api/eod*`` endpoints
     can be exposed when the daemon wires it in.
+
+    ``app`` (Task 6) is an optional pre-built FastAPI application. When
+    provided it is served directly; otherwise the app is built here via
+    ``create_app``. ``run_daemon`` builds the app explicitly so it can wire
+    ``runner._on_task_change = app.state.set_current_task`` before serving.
     """
     import uvicorn
 
-    app = create_app(
-        app_cfg, locks, event_bus, runner,
-        approval_store=approval_store, eod_handler=eod_handler,
-    )
+    if app is None:
+        app = create_app(
+            app_cfg, locks, event_bus, runner,
+            approval_store=approval_store, eod_handler=eod_handler,
+        )
     port = app_cfg.workflow.daemon.port
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

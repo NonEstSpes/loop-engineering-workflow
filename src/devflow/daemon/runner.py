@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+from collections.abc import Callable
 from typing import Any
 
 from devflow.batch.models import BatchEntry
@@ -45,6 +46,7 @@ class WorkflowRunner:
         task_source: TaskSource | None = None,
         approval_bridge: ApprovalBridge | None = None,
         batch_store: BatchStore | None = None,
+        on_task_change: Callable[[str | None], None] | None = None,
     ) -> None:
         self._cfg = app_cfg
         self._bus = event_bus
@@ -52,6 +54,7 @@ class WorkflowRunner:
         self._task_source = task_source
         self._bridge = approval_bridge
         self._batch_store = batch_store
+        self._on_task_change = on_task_change
         self.events_published: int = 0
 
     @property
@@ -80,6 +83,9 @@ class WorkflowRunner:
         """
         # Concurrency: relies on APScheduler max_instances=1; no cross-loop lock (see HANDOFF.md).
         topic = f"task.{task_id}"
+
+        if self._on_task_change is not None:
+            self._on_task_change(task_id)
 
         self._publish(
             topic,
@@ -127,6 +133,8 @@ class WorkflowRunner:
                     self._store_batch_entry(task_id, final_state)
                 except Exception:
                     logger.exception("Failed to store batch entry for task %s", task_id)
+            if self._on_task_change is not None:
+                self._on_task_change(None)
             return final_state
         except Exception:
             logger.exception("Workflow run failed for task %s", task_id)
@@ -138,6 +146,8 @@ class WorkflowRunner:
                     "error": traceback.format_exc(),
                 },
             )
+            if self._on_task_change is not None:
+                self._on_task_change(None)
             raise
 
     def run_all(self, repo_path: str, limit: int = 10) -> list[WorkflowState]:
