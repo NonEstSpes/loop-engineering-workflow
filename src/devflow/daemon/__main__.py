@@ -25,7 +25,7 @@ from devflow.daemon.locks import DaemonLocks
 from devflow.daemon.runner import WorkflowRunner
 from devflow.daemon.scheduler import DaemonScheduler
 from devflow.daemon.sweep import cleanup_orphan_worktrees
-from devflow.daemon.web import run_web_server
+from devflow.daemon.web import create_app, run_web_server
 from devflow.notifications.factory import build_notification_channels
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,15 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
         app_cfg, event_bus, locks, approval_bridge=bridge, batch_store=batch_store
     )
 
+    # Build the app explicitly so we can wire the current-task callback.
+    # The callback lets /api/health and /api/tasks/current reflect the task
+    # the runner is actively working on (set on run start, cleared on end).
+    app = create_app(
+        app_cfg, locks, event_bus, runner,
+        approval_store=approval_store, eod_handler=eod_handler,
+    )
+    runner._on_task_change = app.state.set_current_task  # type: ignore[attr-defined]
+
     # 4. Create and start scheduler, register jobs.
     scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
     scheduler.start()
@@ -112,7 +121,7 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     try:
         run_web_server(
             app_cfg, locks, event_bus, runner,
-            approval_store=approval_store, eod_handler=eod_handler,
+            approval_store=approval_store, eod_handler=eod_handler, app=app,
         )
     finally:
         logger.info("Web server stopped; shutting down scheduler...")

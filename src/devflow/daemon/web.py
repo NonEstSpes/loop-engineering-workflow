@@ -9,17 +9,24 @@ Phase 2+ will add /api/approvals, /api/tasks/*, /api/eod, /api/events (SSE).
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import os
 import time
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from devflow.batch.eod_handler import EodHandler
 from devflow.config import Config
 from devflow.daemon.approval_store import ApprovalStore
-from devflow.daemon.events import EventBus
+from devflow.daemon.events import GLOBAL_TOPIC, EventBus
 from devflow.daemon.locks import DaemonLocks
 
 logger = logging.getLogger(__name__)
@@ -55,6 +62,20 @@ class EodPublishRequest(BaseModel):
     task_ids: list[str] = Field(default_factory=list)
 
 
+class TaskCurrentResponse(BaseModel):
+    """Active task + current graph node (node is None until runner tracks it)."""
+
+    task_id: str | None = None
+    node: str | None = None
+
+
+class TaskQueueResponse(BaseModel):
+    """Pending task queue (introspection limited without a live task source)."""
+
+    queue: list[dict[str, Any]] = Field(default_factory=list)
+    note: str = ""
+
+
 def create_app(
     app_cfg: Config,
     locks: DaemonLocks,
@@ -80,6 +101,17 @@ def create_app(
     app = FastAPI(title="devflow-daemon", version="0.1.0")
     start_time = time.monotonic()
     _state: dict[str, Any] = {"current_task": None}
+
+    # CORS: allow the Vite dev server origin(s) when configured.
+    cors_origins = app_cfg.workflow.daemon.cors_origins
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def _is_task_running() -> bool:
         """Check if the task_run lock is currently held.
@@ -127,6 +159,82 @@ def create_app(
             task_source=app_cfg.workflow.task_source,
         )
 
+    def _entry_summary(entry: Any) -> dict[str, Any]:
+        return {
+            "id": entry.id,
+            "task_id": entry.task_id,
+            "task_title": entry.task_title,
+            "branch_name": entry.branch_name,
+            "final_verdict": entry.final_verdict.value if entry.final_verdict else None,
+            "status": entry.status,
+            "created_at": entry.created_at,
+        }
+
+    @app.get("/api/tasks/current", response_model=TaskCurrentResponse)
+    async def tasks_current() -> TaskCurrentResponse:
+        return TaskCurrentResponse(
+            task_id=_state.get("current_task"),
+            node=None,
+        )
+
+    @app.get("/api/tasks/queue", response_model=TaskQueueResponse)
+    async def tasks_queue() -> TaskQueueResponse:
+        return TaskQueueResponse(
+            queue=[],
+            note="queue introspection not available without an active task source",
+        )
+
+    @app.get("/api/tasks/done")
+    async def tasks_done() -> list[dict[str, Any]]:
+        if eod_handler is None:
+            return []
+        try:
+            entries = eod_handler._store.list_all(status="published")  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - defensive
+            return []
+        return [_entry_summary(e) for e in entries]
+
+    @app.get("/api/tasks/{task_id}")
+    async def task_detail(task_id: str) -> dict[str, Any]:
+        if eod_handler is None:
+            raise HTTPException(status_code=404, detail="No batch store available")
+        entries = eod_handler._store.get_by_task(task_id)  # type: ignore[attr-defined]
+        if not entries:
+            raise HTTPException(status_code=404, detail=f"No entry for task {task_id}")
+        # Most recent entry (get_by_task returns oldest-first).
+        return entries[-1].model_dump(mode="json")
+
+    @app.get("/api/events")
+    async def event_stream() -> EventSourceResponse:
+        """Server-Sent Events stream of all daemon events.
+
+        Subscribes to the EventBus global topic and forwards each event as an
+        SSE frame (``event: <name>`` + ``data: <json>``). The client connects
+        via ``new EventSource('/api/events')``. A 15s ``ping`` heartbeat keeps
+        proxies/browsers from closing idle connections.
+        """
+        queue = await event_bus.subscribe(GLOBAL_TOPIC)
+
+        async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except TimeoutError:
+                        # Heartbeat keepalive (prevents proxy/browser timeouts).
+                        yield {"event": "ping", "data": "{}"}
+                        continue
+                    yield {
+                        "event": msg.get("event", "message"),
+                        "data": json.dumps(msg),
+                    }
+            finally:
+                # Remove this subscriber's queue on disconnect so the EventBus
+                # does not accumulate dead queues (one per reconnect).
+                await event_bus.unsubscribe(GLOBAL_TOPIC, queue)
+
+        return EventSourceResponse(event_generator())
+
     if approval_store is not None:
 
         @app.get("/api/approvals")
@@ -150,17 +258,6 @@ def create_app(
             return {"status": "resolved", "thread_id": thread_id}
 
     if eod_handler is not None:
-
-        def _entry_summary(entry: Any) -> dict[str, Any]:
-            return {
-                "id": entry.id,
-                "task_id": entry.task_id,
-                "task_title": entry.task_title,
-                "branch_name": entry.branch_name,
-                "final_verdict": entry.final_verdict.value if entry.final_verdict else None,
-                "status": entry.status,
-                "created_at": entry.created_at,
-            }
 
         @app.get("/api/eod")
         async def list_eod_pending() -> list[dict[str, Any]]:
@@ -189,6 +286,53 @@ def create_app(
     # Expose the setter so the runner can update state.
     app.state.set_current_task = set_current_task  # type: ignore[attr-defined]
 
+    # Serve the built frontend SPA in production (when the dist dir exists).
+    # Registered AFTER all /api/* routes so the SPA fallback never shadows API
+    # endpoints; the handler additionally 404s any path starting with "api".
+    daemon_cfg = app_cfg.workflow.daemon
+    if daemon_cfg.serve_frontend:
+        # Normalize + absolutize dist_path once so the containment check in
+        # spa_fallback is reliable (commonpath needs canonical, absolute paths).
+        dist_path = os.path.abspath(os.path.normpath(daemon_cfg.frontend_dist))
+        index_file = os.path.join(dist_path, "index.html")
+        if os.path.isdir(dist_path) and os.path.isfile(index_file):
+            from fastapi.staticfiles import StaticFiles
+
+            # Mount static assets (JS/CSS/images) under /assets.
+            assets_dir = os.path.join(dist_path, "assets")
+            if os.path.isdir(assets_dir):
+                app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+            # SPA fallback: any non-/api GET serves index.html (or a real file).
+            @app.get("/{full_path:path}")
+            async def spa_fallback(full_path: str) -> FileResponse:
+                # Never intercept API routes.
+                if full_path.startswith("api"):
+                    raise HTTPException(status_code=404)
+                # Serve a specific static file if it exists (and is under dist),
+                # else index.html.
+                if full_path:
+                    candidate = os.path.abspath(
+                        os.path.normpath(os.path.join(dist_path, full_path))
+                    )
+                    # Containment check: prevent path traversal (e.g.
+                    # %2e%2e-encoded ".." escapes that os.path.join would
+                    # follow). Reject the request explicitly rather than leaking
+                    # a file or serving the SPA shell.
+                    if os.path.commonpath([candidate, dist_path]) != dist_path:
+                        raise HTTPException(status_code=404)
+                    if os.path.isfile(candidate):
+                        return FileResponse(candidate)
+                return FileResponse(index_file)
+
+            logger.info("Serving frontend SPA from %s", dist_path)
+        else:
+            logger.warning(
+                "Frontend dist not found at %s; daemon serves API only. "
+                "Run `npm run build` in frontend/ to build the SPA.",
+                dist_path,
+            )
+
     return app
 
 
@@ -199,6 +343,7 @@ def run_web_server(
     runner: Any | None = None,
     approval_store: ApprovalStore | None = None,
     eod_handler: EodHandler | None = None,
+    app: FastAPI | None = None,
 ) -> None:
     """Run the uvicorn server (blocking). Called from the daemon entry point.
 
@@ -207,12 +352,18 @@ def run_web_server(
 
     ``eod_handler`` (Task 5) is forwarded so the ``/api/eod*`` endpoints
     can be exposed when the daemon wires it in.
+
+    ``app`` (Task 6) is an optional pre-built FastAPI application. When
+    provided it is served directly; otherwise the app is built here via
+    ``create_app``. ``run_daemon`` builds the app explicitly so it can wire
+    ``runner._on_task_change = app.state.set_current_task`` before serving.
     """
     import uvicorn
 
-    app = create_app(
-        app_cfg, locks, event_bus, runner,
-        approval_store=approval_store, eod_handler=eod_handler,
-    )
+    if app is None:
+        app = create_app(
+            app_cfg, locks, event_bus, runner,
+            approval_store=approval_store, eod_handler=eod_handler,
+        )
     port = app_cfg.workflow.daemon.port
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

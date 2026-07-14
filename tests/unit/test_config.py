@@ -158,3 +158,32 @@ def test_forge_config_from_yaml(tmp_path: Path) -> None:
     assert cfg.forge.target_branch == "develop"
     assert "push" in cfg.forge.actions
     assert "create_mr" in cfg.forge.actions
+
+
+def test_daemon_config_has_frontend_defaults() -> None:
+    """DaemonConfig gets frontend defaults."""
+    from devflow.config import DaemonConfig
+
+    cfg = DaemonConfig()
+    assert cfg.serve_frontend is True
+    assert cfg.frontend_dist == "frontend/dist"
+    assert cfg.cors_origins == []
+
+
+def test_daemon_config_frontend_from_yaml(tmp_path: Path) -> None:
+    """Frontend config loads from YAML."""
+    from devflow.config import load_workflow_config
+
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "task_source: mock\n"
+        "daemon:\n"
+        "  enabled: true\n"
+        "  cors_origins:\n"
+        "    - http://localhost:5173\n"
+        "  frontend_dist: build/spa\n",
+        encoding="utf-8",
+    )
+    cfg = load_workflow_config(yaml_path)
+    assert cfg.daemon.cors_origins == ["http://localhost:5173"]
+    assert cfg.daemon.frontend_dist == "build/spa"

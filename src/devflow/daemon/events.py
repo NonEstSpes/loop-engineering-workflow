@@ -13,6 +13,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+GLOBAL_TOPIC = "*"
+"""Global topic: a subscriber on this topic receives every published event.
+
+Used by the SSE endpoint (``/api/events``) to stream all daemon events to the
+dashboard without requiring the client to know task ids up front.
+"""
+
 
 class EventBus:
     """Fan-out pub/sub: each subscriber gets its own asyncio.Queue.
@@ -32,16 +39,34 @@ class EventBus:
         return queue
 
     async def publish(self, topic: str, data: dict[str, Any]) -> None:
-        """Publish ``data`` to all subscribers of ``topic``.
+        """Publish ``data`` to all subscribers of ``topic`` AND to the global topic.
 
         If a subscriber's queue is full, the message is dropped for that
         subscriber (logged) rather than blocking the publisher.
         """
+        self._fan_out(topic, data)
+        if topic != GLOBAL_TOPIC:
+            self._fan_out(GLOBAL_TOPIC, data)
+
+    def _fan_out(self, topic: str, data: dict[str, Any]) -> None:
+        """Deliver ``data`` to every subscriber of ``topic`` (best-effort)."""
         for queue in self._subscribers.get(topic, []):
             try:
                 queue.put_nowait(data)
             except asyncio.QueueFull:
                 logger.warning("EventBus queue full for topic '%s'; dropping message", topic)
+
+    async def unsubscribe(self, topic: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        """Remove a subscriber queue so publishes stop delivering to it.
+
+        Called when an SSE client disconnects; prevents unbounded queue
+        accumulation (each reconnect left a dead queue before).
+        """
+        subs = self._subscribers.get(topic, [])
+        # Filter out the queue (identity comparison — there may be duplicates).
+        self._subscribers[topic] = [q for q in subs if q is not queue]
+        if not self._subscribers[topic]:
+            del self._subscribers[topic]
 
     async def close(self) -> None:
         """Clear all subscribers. Queues are abandoned (callers should stop reading)."""

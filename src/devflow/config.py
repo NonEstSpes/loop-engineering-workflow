@@ -84,6 +84,10 @@ class DaemonConfig(BaseModel):
     port: int = 8787
     approval_timeout_hours: int = 8
     approval_on_timeout: str = "defer"  # defer | reject
+    # Frontend dashboard (Phase 5).
+    serve_frontend: bool = True
+    frontend_dist: str = "frontend/dist"
+    cors_origins: list[str] = Field(default_factory=list)
 
 
 class ForgeConfig(BaseModel):

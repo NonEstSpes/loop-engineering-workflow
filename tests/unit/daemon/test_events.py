@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from devflow.daemon.events import EventBus
+from devflow.daemon.events import GLOBAL_TOPIC, EventBus
 
 
 @pytest.mark.asyncio
@@ -53,3 +53,58 @@ async def test_close_unsubscribes_all() -> None:
     queue = await bus.subscribe("task.1")
     await bus.close()
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_global_topic_receives_all_events() -> None:
+    """A subscriber on the global '*' topic receives every published event."""
+    bus = EventBus()
+    queue = await bus.subscribe(GLOBAL_TOPIC)
+
+    await bus.publish("task.4321", {"event": "task.started", "task_id": "4321"})
+    await bus.publish("eod", {"event": "eod.ready", "pending_count": 3})
+
+    msg1 = await asyncio.wait_for(queue.get(), timeout=1.0)
+    msg2 = await asyncio.wait_for(queue.get(), timeout=1.0)
+
+    assert msg1["event"] == "task.started"
+    assert msg2["event"] == "eod.ready"
+    await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_specific_topic_still_works_alongside_global() -> None:
+    """A subscriber on a specific topic still gets only that topic's events."""
+    bus = EventBus()
+    specific_q = await bus.subscribe("task.1")
+    global_q = await bus.subscribe(GLOBAL_TOPIC)
+
+    await bus.publish("task.1", {"event": "task.started", "task_id": "1"})
+    await bus.publish("task.2", {"event": "task.started", "task_id": "2"})
+
+    specific_msg = await asyncio.wait_for(specific_q.get(), timeout=1.0)
+    # specific_q should only have task.1's event
+    assert specific_msg["task_id"] == "1"
+
+    # global_q should have both
+    g1 = await asyncio.wait_for(global_q.get(), timeout=1.0)
+    g2 = await asyncio.wait_for(global_q.get(), timeout=1.0)
+    assert {g1["task_id"], g2["task_id"]} == {"1", "2"}
+    await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_removes_queue() -> None:
+    """unsubscribe() removes the queue so it stops receiving events."""
+    bus = EventBus()
+    queue = await bus.subscribe(GLOBAL_TOPIC)
+    await bus.publish(GLOBAL_TOPIC, {"event": "e1"})
+    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+    assert msg["event"] == "e1"
+
+    await bus.unsubscribe(GLOBAL_TOPIC, queue)
+    await bus.publish(GLOBAL_TOPIC, {"event": "e2"})  # should not reach queue
+    # queue should be empty (no new message). Use wait_for with short timeout.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(queue.get(), timeout=0.1)
+    await bus.close()
