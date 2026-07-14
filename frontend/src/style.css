@@ -1,0 +1,115 @@
+/* Minimal functional styles — NOT a design system. UI polish is a separate task. */
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+body {
+  margin: 0;
+  padding: 0;
+  background: #f7f7f8;
+  color: #1a1a1a;
+}
+#devflow-app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+header h1 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+nav a {
+  color: #0366d6;
+  text-decoration: none;
+}
+nav a:hover {
+  text-decoration: underline;
+}
+.card {
+  background: #fff;
+  border: 1px solid #e1e1e3;
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.card h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+dt {
+  font-weight: 600;
+  color: #555;
+}
+dd {
+  margin: 0;
+}
+code, pre {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.85em;
+  background: #f0f0f1;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+pre {
+  padding: 0.75rem;
+  overflow-x: auto;
+  max-height: 30em;
+}
+.error {
+  color: #cb2431;
+}
+button {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  margin-right: 0.5rem;
+}
+button:hover:not(:disabled) {
+  background: #f0f0f1;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #eee;
+}
+th {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #666;
+}
+.actions {
+  margin-bottom: 1.5rem;
+}
+details {
+  margin: 0.5rem 0;
+}
+summary {
+  cursor: pointer;
+  color: #0366d6;
+}

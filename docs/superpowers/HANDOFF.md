@@ -32,11 +32,11 @@
 
 ## Git состояние
 
-- **PRs:** #3 (Phase 1, merged), #4 (Phase 2, merged), #5 (Phase 3, merged), Phase 4 **pending merge** (ветка `feature/phase4-eod-batch`)
-- **Текущая ветка:** `feature/phase4-eod-batch` (Phase 4, ждёт merge)
-- **Main:** содержит Phases 1-3 (Phase 4 ещё не смержён)
+- **PRs:** #3 (Phase 1, merged), #4 (Phase 2, merged), #5 (Phase 3, merged), Phase 4 **pending merge** (ветка `feature/phase4-eod-batch`), Phase 5 **pending merge** (ветка `feature/phase5-vue-dashboard`)
+- **Текущая ветка:** `feature/phase5-vue-dashboard` (Phase 5, ждёт merge)
+- **Main:** содержит Phases 1-3 (Phases 4-5 ещё не смержены)
 
-## Что реализовано (Phases 1-4)
+## Что реализовано (Phases 1-5)
 
 ### Phase 1: Daemon skeleton (PR #3, merged)
 - `DaemonConfig` + `HitlStrategy` (config.py)
@@ -108,19 +108,24 @@
   hard guard; if task and EOD schedules are set close together or a task run
   overruns past `eod_schedule`, overlap is possible.
 
-## Что осталось (Phase 5)
+### Phase 5: Vue 3 SPA Dashboard (this branch, feature/phase5-vue-dashboard)
+- Backend: `/api/events` SSE endpoint (sse-starlette, global '*' topic)
+- Backend: `/api/tasks/*` routes (current/queue/done/{id})
+- Backend: CORS middleware (dev server origins), StaticFiles SPA serving + fallback
+- Backend: `on_task_change` callback wires runner → app.state.set_current_task
+- Frontend: Vue 3 + Vite + TypeScript (strict) + Pinia + Vue Router scaffold
+- Frontend: typed API client (hand-written types matching FastAPI models)
+- Frontend: useSSE composable (live event stream → store refresh) + usePolling
+- Frontend: 4 views — Dashboard, Approvals, EOD Review, Task Detail (+ 404)
+- `DaemonConfig` += serve_frontend, frontend_dist, cors_origins
+- Minimal functional CSS (no design system — UI polish is future work)
 
-### Phase 5: Vue 3 SPA dashboard
+## Что осталось
 
-**Цель:** фронтенд-дашборд для live-прогресса, деталей задач, одобрений, EOD-review.
-
-Ключевые компоненты:
-- `frontend/` — отдельный npm-пакет (Vue 3 + Vite + TypeScript + Pinia + Vue Router)
-- FastAPI: `/api/tasks/*`, `/api/events` (SSE) — `graph.stream()` → EventBus → SSE
-- Production: FastAPI раздаёт `frontend/dist/` как статику
-- Development: Vite dev-server проксирует `/api/*` на FastAPI
-
-UI-дизайн (компоненты, стили) — **отдельная задача**, сейчас только каркасы.
+Ничего — все 5 фаз реализованы. Дальнейшая работа — UI-дизайн/полировка
+дашборда (сейчас функциональные каркасы без дизайн-системы), GC для
+`ApprovalStore`, retention policy для `published` BatchEntry, и другие
+технические долги из списка ниже.
 
 ## Workflow разработки (как работали)
 
