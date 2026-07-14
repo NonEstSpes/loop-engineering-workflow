@@ -2,6 +2,7 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { useDaemonStore } from '@/stores/daemon'
 import { useTasksStore } from '@/stores/tasks'
 import { useEodStore } from '@/stores/eod'
+import { useControlsStore } from '@/stores/controls'
 
 /**
  * Connect to /api/events SSE stream and refresh relevant stores on events.
@@ -11,6 +12,7 @@ export function useSSE() {
   const daemon = useDaemonStore()
   const tasks = useTasksStore()
   const eod = useEodStore()
+  const controls = useControlsStore()
 
   let source: EventSource | null = null
   let reconnectTimer: number | null = null
@@ -24,10 +26,12 @@ export function useSSE() {
     source.addEventListener('task.finished', () => {
       void tasks.fetchCurrent()
       void tasks.fetchDone()
+      controls.markFinished('', 'finished')
     })
     source.addEventListener('task.error', () => {
       void tasks.fetchCurrent()
       void daemon.fetchAll()
+      controls.markFinished('', 'error')
     })
     source.addEventListener('eod.ready', () => {
       void eod.fetch()

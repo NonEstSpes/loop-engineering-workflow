@@ -113,3 +113,53 @@ summary {
   cursor: pointer;
   color: #0366d6;
 }
+
+/* --- Controls: tabs --- */
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 1rem;
+}
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  border-radius: 0;
+  padding: 0.5rem 1rem;
+  margin-right: 0;
+}
+.tabs button.active {
+  border-bottom-color: #0366d6;
+  color: #0366d6;
+  font-weight: 600;
+}
+/* --- Controls: badges --- */
+.running-badge { color: #0366d6; }
+.idle-badge { color: #28a745; }
+.unsaved-badge { color: #d97706; font-weight: 600; }
+.modified-dot { color: #d97706; }
+/* --- Controls: TODO priorities --- */
+.prio-critical { color: #cb2431; font-weight: 600; }
+.prio-urgent { color: #d97706; }
+.prio-normal { color: #666; }
+.checkbox-btn { border: 1px solid #ccc; padding: 0.1rem 0.4rem; margin-right: 0; }
+/* --- Controls: agents layout --- */
+.agents-layout { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; }
+.agent-list { list-style: none; padding: 0; margin: 0; }
+.agent-list li { padding: 0.3rem 0; }
+.agent-list li.active button { font-weight: 600; color: #0366d6; }
+.agent-list li.modified button::after { content: " ●"; color: #d97706; }
+.agent-editor textarea.prompt-textarea {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.85em;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  resize: vertical;
+}
+/* --- status colors --- */
+.finished { color: #28a745; }
+.error { color: #cb2431; }
+.started { color: #0366d6; }
