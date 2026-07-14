@@ -12,12 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -282,6 +284,41 @@ def create_app(
 
     # Expose the setter so the runner can update state.
     app.state.set_current_task = set_current_task  # type: ignore[attr-defined]
+
+    # Serve the built frontend SPA in production (when the dist dir exists).
+    # Registered AFTER all /api/* routes so the SPA fallback never shadows API
+    # endpoints; the handler additionally 404s any path starting with "api".
+    daemon_cfg = app_cfg.workflow.daemon
+    if daemon_cfg.serve_frontend:
+        dist_path = daemon_cfg.frontend_dist
+        index_file = os.path.join(dist_path, "index.html")
+        if os.path.isdir(dist_path) and os.path.isfile(index_file):
+            from fastapi.staticfiles import StaticFiles
+
+            # Mount static assets (JS/CSS/images) under /assets.
+            assets_dir = os.path.join(dist_path, "assets")
+            if os.path.isdir(assets_dir):
+                app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+            # SPA fallback: any non-/api GET serves index.html (or a real file).
+            @app.get("/{full_path:path}")
+            async def spa_fallback(full_path: str) -> FileResponse:
+                # Never intercept API routes.
+                if full_path.startswith("api"):
+                    raise HTTPException(status_code=404)
+                # Serve a specific static file if it exists, else index.html.
+                candidate = os.path.join(dist_path, full_path)
+                if full_path and os.path.isfile(candidate):
+                    return FileResponse(candidate)
+                return FileResponse(index_file)
+
+            logger.info("Serving frontend SPA from %s", dist_path)
+        else:
+            logger.warning(
+                "Frontend dist not found at %s; daemon serves API only. "
+                "Run `npm run build` in frontend/ to build the SPA.",
+                dist_path,
+            )
 
     return app
 
