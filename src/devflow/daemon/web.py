@@ -156,6 +156,7 @@ def create_app(
     eod_handler: EodHandler | None = None,
     scheduler: Any | None = None,
     queue_store: Any | None = None,
+    event_store: Any | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -180,8 +181,28 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.cfg = app_cfg
     app.state.queue_store = queue_store
+    app.state.event_store = event_store
     # Cross-loop-safe (threading, not asyncio) mutex for on-demand runs.
     app.state._run_lock = threading.Lock()
+
+    # Background task: subscribe to EventBus → write events to EventStore.
+    @app.on_event("startup")
+    async def _start_event_logger() -> None:
+        if event_store is not None:
+            queue = await event_bus.subscribe(GLOBAL_TOPIC)
+
+            async def _log_loop() -> None:
+                while True:
+                    try:
+                        msg = await queue.get()
+                        event_type = msg.get("event", "unknown")
+                        await asyncio.to_thread(event_store.add, event_type, msg)
+                    except Exception:
+                        logger.exception("EventStore subscriber error")
+                        await asyncio.sleep(1.0)
+
+            asyncio.create_task(_log_loop())
+            logger.info("EventStore background subscriber started")
 
     # CORS: allow the Vite dev server origin(s) when configured.
     cors_origins = app_cfg.workflow.daemon.cors_origins
@@ -676,6 +697,14 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return [e.model_dump() for e in result]
+
+    @app.get("/api/events/history")
+    async def event_history(limit: int = 100, event_type: str | None = None) -> list[dict[str, Any]]:
+        """Return recent events from the persistent log (newest first)."""
+        es = app.state.event_store  # type: ignore[attr-defined]
+        if es is None:
+            return []
+        return [e.model_dump() for e in es.get_recent(limit=limit, event_type=event_type)]
 
     @app.get("/api/events")
     async def event_stream() -> EventSourceResponse:

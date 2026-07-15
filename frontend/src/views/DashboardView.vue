@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { useDaemonStore } from '@/stores/daemon'
 import { useTasksStore } from '@/stores/tasks'
-import { useControlsStore } from '@/stores/controls'
 import { usePolling } from '@/composables/usePolling'
+import { formatUptime } from '@/composables/useFormat'
 
 const daemon = useDaemonStore()
 const tasks = useTasksStore()
-const controls = useControlsStore()
 
 const { refresh } = usePolling(async () => {
   await Promise.all([daemon.fetchAll(), tasks.fetchAll()])
@@ -14,17 +13,6 @@ const { refresh } = usePolling(async () => {
 
 // initial fetch
 void refresh()
-
-// Quick "Run next" from the dashboard: reuse the controls store.
-// run() with no task id runs the next task by priority.
-async function onRunNext() {
-  try {
-    await controls.run()
-    await refresh()
-  } catch {
-    // error already surfaced in controls.error
-  }
-}
 </script>
 
 <template>
@@ -35,9 +23,9 @@ async function onRunNext() {
     <div v-if="daemon.health" class="card">
       <h3>Health</h3>
       <dl>
-        <dt>Status</dt><dd>{{ daemon.health.status }}</dd>
+        <dt>Status</dt><dd><span :class="['health-badge', `health-${daemon.health.status}`]">{{ daemon.health.status }}</span></dd>
         <dt>Scheduler</dt><dd>{{ daemon.health.scheduler }}</dd>
-        <dt>Uptime</dt><dd>{{ daemon.health.uptime_seconds }}s</dd>
+        <dt>Uptime</dt><dd>{{ formatUptime(daemon.health.uptime_seconds) }}</dd>
         <dt>Pending approvals</dt><dd>{{ daemon.health.pending_approvals }}</dd>
         <dt>Batch store pending</dt><dd>{{ daemon.health.batch_store_pending }}</dd>
       </dl>
@@ -60,15 +48,6 @@ async function onRunNext() {
         <span v-if="tasks.current.node"> (node: {{ tasks.current.node }})</span>
       </p>
       <p v-else>No task currently running.</p>
-      <p v-if="controls.error" class="error">{{ controls.error }}</p>
-      <button
-        class="run-btn"
-        @click="onRunNext"
-        :disabled="controls.isRunning || !!tasks.current?.task_id"
-        :title="tasks.current?.task_id ? 'A task is already running' : 'Run the next task by priority'"
-      >
-        {{ controls.isRunning ? 'Starting…' : '▶ Run next' }}
-      </button>
     </div>
 
     <div class="card">

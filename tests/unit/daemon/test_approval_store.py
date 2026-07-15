@@ -101,3 +101,56 @@ def test_is_resolved_reflects_state() -> None:
     assert store.is_resolved("thread-1") is True
     # Still pending-free in get_pending (filtered as resolved).
     assert store.get_pending() == []
+
+
+# ---------------------------------------------------------------------------
+# SSE publication (P2)
+# ---------------------------------------------------------------------------
+
+def test_register_publishes_approval_waiting() -> None:
+    """register() publishes approval.waiting when event_bus is provided."""
+    import asyncio
+    from devflow.daemon.events import EventBus, GLOBAL_TOPIC
+    from devflow.daemon.approval_store import ApprovalStore
+
+    bus = EventBus()
+    store = ApprovalStore(event_bus=bus)
+
+    async def _check() -> dict:
+        queue = await bus.subscribe(GLOBAL_TOPIC)
+        store.register("thread-1", {"gate": "plan_approval", "task_id": "123"})
+        return await asyncio.wait_for(queue.get(), timeout=2.0)
+
+    result = asyncio.run(_check())
+    assert result["event"] == "approval.waiting"
+    assert result["thread_id"] == "thread-1"
+
+
+def test_resolve_publishes_approval_resolved() -> None:
+    """resolve() publishes approval.resolved when event_bus is provided."""
+    import asyncio
+    from devflow.daemon.events import EventBus, GLOBAL_TOPIC
+    from devflow.daemon.approval_store import ApprovalStore
+
+    bus = EventBus()
+    store = ApprovalStore(event_bus=bus)
+    store.register("thread-1", {"gate": "plan_approval"})
+
+    async def _check() -> dict:
+        queue = await bus.subscribe(GLOBAL_TOPIC)
+        store.resolve("thread-1", {"approved": True, "reason": "looks good"})
+        return await asyncio.wait_for(queue.get(), timeout=2.0)
+
+    result = asyncio.run(_check())
+    assert result["event"] == "approval.resolved"
+    assert result["thread_id"] == "thread-1"
+    assert result["approved"] is True
+
+
+def test_no_event_bus_does_not_error() -> None:
+    """register/resolve without event_bus work as before (no publication)."""
+    from devflow.daemon.approval_store import ApprovalStore
+
+    store = ApprovalStore()  # event_bus=None
+    store.register("thread-1", {"gate": "plan_approval"})
+    assert store.resolve("thread-1", {"approved": True}) is True
