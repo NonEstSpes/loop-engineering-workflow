@@ -36,15 +36,41 @@ class _PendingApproval:
 class ApprovalStore:
     """Thread-safe registry of pending human approvals."""
 
-    def __init__(self) -> None:
+    def __init__(self, event_bus: Any | None = None) -> None:
         self._lock = threading.Lock()
         self._pending: dict[str, _PendingApproval] = {}
+        self._event_bus = event_bus
+
+    def _publish_sync(self, data: dict[str, Any]) -> None:
+        """Publish an event to EventBus from a synchronous (threading) context.
+
+        Uses ``asyncio.run`` like runner._publish; falls back to a thread
+        if already inside a running loop.
+        """
+        if self._event_bus is None:
+            return
+        import asyncio
+
+        async def _pub() -> None:
+            await self._event_bus.publish("*", data)
+
+        try:
+            asyncio.run(_pub())
+        except RuntimeError:
+            # Already inside a running loop — run in a separate thread.
+            import threading
+            threading.Thread(target=asyncio.run, args=(_pub(),), daemon=True).start()
 
     def register(self, thread_id: str, payload: dict[str, Any]) -> None:
         """Register a new pending approval. Overwrites if thread_id exists."""
         with self._lock:
             self._pending[thread_id] = _PendingApproval(thread_id, payload)
         logger.info("Registered pending approval for thread %s", thread_id)
+        self._publish_sync({
+            "event": "approval.waiting",
+            "thread_id": thread_id,
+            **payload,
+        })
 
     def resolve(self, thread_id: str, decision: dict[str, Any]) -> bool:
         """Deliver a human decision to a pending approval.
@@ -67,6 +93,12 @@ class ApprovalStore:
             entry.event.set()
         approved = decision.get("approved")
         logger.info("Resolved approval for thread %s: approved=%s", thread_id, approved)
+        self._publish_sync({
+            "event": "approval.resolved",
+            "thread_id": thread_id,
+            "approved": approved,
+            "reason": decision.get("reason", ""),
+        })
         return True
 
     def wait(self, thread_id: str, timeout: float) -> dict[str, Any] | None:

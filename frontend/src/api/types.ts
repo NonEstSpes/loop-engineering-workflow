@@ -234,3 +234,12 @@ export interface QueueReorderRequest {
   task_id: string
   new_position: number
 }
+
+// --- Event history (P2) ---
+
+export interface EventLogEntry {
+  id: number
+  timestamp: string
+  event_type: string
+  data: Record<string, unknown>
+}

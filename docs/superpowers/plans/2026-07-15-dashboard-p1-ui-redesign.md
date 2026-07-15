@@ -1,3 +1,169 @@
+# Dashboard P1 — UI/UX Redesign Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Replace the ad-hoc CSS with a proper design-token system (CSS variables), add dark mode, status indicators, human-readable time formatting, responsive layout, nav active-state, and polished empty states.
+
+**Architecture:** Full rewrite of `style.css` with CSS variables. New `useTheme.ts` (dark mode toggle + localStorage) and `useFormat.ts` (uptime/relative/timestamp formatting). `useSSE.ts` gains a `connectionState` ref for the SSE dot. All views/components updated to use `var(--color-*)` and the new composables. App.vue gets sticky header with theme toggle + SSE dot.
+
+**Tech Stack:** Vanilla CSS (no framework), Vue 3 Composition API, TypeScript.
+
+## Global Constraints
+
+- **No CSS framework** — vanilla CSS with CSS variables only.
+- **Dark mode** via `[data-theme="dark"]` attribute on `<html>`, persisted in `localStorage`.
+- **All colors** must use `var(--color-*)` — no hardcoded hex in components.
+- **Responsive breakpoints**: mobile (<768px), tablet (768-1024px), desktop (>1024px).
+- **Frontend**: no test runner; verify via `npm run typecheck` + `npm run build`.
+- **Commit after each task**.
+- **Branch**: `feature/phase5-vue-dashboard`.
+
+---
+
+### Task 1: useTheme + useFormat composables
+
+**Files:**
+- Create: `frontend/src/composables/useTheme.ts`
+- Create: `frontend/src/composables/useFormat.ts`
+
+- [ ] **Step 1: Create useTheme.ts**
+
+```typescript
+import { ref, onMounted } from 'vue'
+
+export type Theme = 'light' | 'dark'
+
+export function useTheme() {
+  const theme = ref<Theme>(
+    (localStorage.getItem('devflow-theme') as Theme) || 'light'
+  )
+
+  function apply(t: Theme) {
+    document.documentElement.setAttribute('data-theme', t)
+    localStorage.setItem('devflow-theme', t)
+  }
+
+  function toggle() {
+    theme.value = theme.value === 'light' ? 'dark' : 'light'
+    apply(theme.value)
+  }
+
+  onMounted(() => apply(theme.value))
+
+  return { theme, toggle }
+}
+```
+
+- [ ] **Step 2: Create useFormat.ts**
+
+```typescript
+export function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const m = Math.floor(seconds / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  const remM = m % 60
+  if (h < 24) return `${h}h ${remM}m`
+  const d = Math.floor(h / 24)
+  return `${d}d ${h % 24}h`
+}
+
+export function formatRelative(iso: string): string {
+  const now = Date.now()
+  const then = new Date(iso).getTime()
+  const diff = Math.floor((now - then) / 1000)
+  if (diff < 60) return 'только что'
+  if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`
+  return `${Math.floor(diff / 86400)} дн назад`
+}
+
+export function formatTimestamp(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+```
+
+- [ ] **Step 3: Verify typecheck**
+
+Run: `cd frontend && npm run typecheck`
+Expected: PASS
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add frontend/src/composables/useTheme.ts frontend/src/composables/useFormat.ts
+git commit -m "feat(frontend): useTheme (dark mode) + useFormat (uptime/relative/timestamp)"
+```
+
+---
+
+### Task 2: SSE connectionState in useSSE
+
+**Files:**
+- Modify: `frontend/src/composables/useSSE.ts`
+
+- [ ] **Step 1: Add connectionState ref**
+
+In `useSSE.ts`, add a module-level singleton ref (shared across callers, like useToast):
+
+```typescript
+import { ref } from 'vue'
+
+export const sseConnectionState = ref<'connected' | 'reconnecting' | 'error'>('reconnecting')
+```
+
+In `connect()`, update the state:
+- On successful `new EventSource('/api/events')` opening: set `'connected'` (add `source.onopen` handler).
+- In `source.onerror`: set `'reconnecting'`.
+- The state never goes to `'error'` permanently (always retries), so keep `'reconnecting'` on error.
+
+Add to the `onMounted(connect)` flow:
+```typescript
+    source.onopen = () => {
+      sseConnectionState.value = 'connected'
+    }
+```
+
+And in `source.onerror`:
+```typescript
+    source.onerror = () => {
+      sseConnectionState.value = 'reconnecting'
+      source?.close()
+      source = null
+      reconnectTimer = window.setTimeout(connect, 5000)
+    }
+```
+
+- [ ] **Step 2: Verify typecheck**
+
+Run: `cd frontend && npm run typecheck`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/composables/useSSE.ts
+git commit -m "feat(frontend): SSE connectionState ref for status indicator"
+```
+
+---
+
+### Task 3: Full style.css rewrite with design tokens + dark mode + responsive
+
+**Files:**
+- Rewrite: `frontend/src/style.css`
+
+This is the core of P1. Replace the entire file with a design-token-based system.
+
+- [ ] **Step 1: Rewrite style.css**
+
+Replace the entire contents of `frontend/src/style.css` with:
+
+```css
 /* DevFlow Dashboard — Design System (P1) */
 
 :root {
@@ -268,3 +434,169 @@ input, select, textarea {
   header { flex-wrap: wrap; }
   nav { width: 100%; }
 }
+```
+
+- [ ] **Step 2: Verify build**
+
+Run: `cd frontend && npm run build`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/style.css
+git commit -m "feat(frontend): full style.css rewrite — design tokens, dark mode, responsive"
+```
+
+---
+
+### Task 4: App.vue — sticky header with theme toggle + SSE dot
+
+**Files:**
+- Modify: `frontend/src/App.vue`
+
+- [ ] **Step 1: Update App.vue**
+
+Replace the `<header>` block and add imports:
+
+```vue
+<script setup lang="ts">
+import { RouterLink, RouterView } from 'vue-router'
+import { useSSE, sseConnectionState } from '@/composables/useSSE'
+import { useToast } from '@/composables/useToast'
+import { useTheme } from '@/composables/useTheme'
+
+useSSE()
+const { toasts, dismiss } = useToast()
+const { theme, toggle } = useTheme()
+</script>
+
+<template>
+  <div id="devflow-app">
+    <header>
+      <h1>DevFlow Dashboard</h1>
+      <nav>
+        <RouterLink to="/">Dashboard</RouterLink>
+        <RouterLink to="/approvals">Approvals</RouterLink>
+        <RouterLink to="/eod">EOD Review</RouterLink>
+        <RouterLink to="/controls">Controls</RouterLink>
+        <RouterLink to="/activity">Activity</RouterLink>
+      </nav>
+      <div class="header-right">
+        <span
+          :class="['sse-dot', sseConnectionState]"
+          :title="`SSE: ${sseConnectionState}`"
+        ></span>
+        <button class="theme-toggle" @click="toggle" :title="theme === 'light' ? 'Dark mode' : 'Light mode'">
+          {{ theme === 'light' ? '🌙' : '☀️' }}
+        </button>
+      </div>
+    </header>
+    <main>
+      <RouterView />
+    </main>
+    <div class="toast-container">
+      <div
+        v-for="t in toasts"
+        :key="t.id"
+        :class="['toast', `toast-${t.type}`]"
+        @click="dismiss(t.id)"
+      >
+        {{ t.message }}
+      </div>
+    </div>
+  </div>
+</template>
+```
+
+Note: removed the `<span> · </span>` separators — nav uses `gap` in CSS now.
+
+- [ ] **Step 2: Verify typecheck + build**
+
+Run: `cd frontend && npm run typecheck && npm run build`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/App.vue
+git commit -m "feat(frontend): sticky header with theme toggle + SSE connection dot"
+```
+
+---
+
+### Task 5: DashboardView — health badge + formatUptime + empty states
+
+**Files:**
+- Modify: `frontend/src/views/DashboardView.vue`
+
+- [ ] **Step 1: Update DashboardView**
+
+In `<script setup>`, add:
+```typescript
+import { formatUptime } from '@/composables/useFormat'
+```
+
+In the template, replace `{{ daemon.health.uptime_seconds }}s` with `{{ formatUptime(daemon.health.uptime_seconds) }}`.
+
+Replace the health status display:
+```vue
+        <dt>Status</dt><dd><span :class="['health-badge', `health-${daemon.health.status}`]">{{ daemon.health.status }}</span></dd>
+```
+
+Replace empty state texts:
+- "No task currently running." → keep but wrap in empty-state style.
+- "No completed tasks." → keep but wrap in empty-state style.
+
+- [ ] **Step 2: Verify typecheck + build**
+
+Run: `cd frontend && npm run typecheck && npm run build`
+Expected: PASS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/views/DashboardView.vue
+git commit -m "feat(frontend): DashboardView — health badge + human-readable uptime"
+```
+
+---
+
+### Task 6: Smoke test + final verification
+
+- [ ] **Step 1: Build frontend**
+
+Run: `cd frontend && npm run build`
+Expected: PASS
+
+- [ ] **Step 2: Restart daemon + Playwright smoke test**
+
+Restart daemon. Check:
+1. Dark mode toggle works (click 🌙, background turns dark).
+2. Health badge shows colored dot.
+3. SSE dot green when connected.
+4. Nav active-state highlights current page.
+5. Uptime formatted as "Xm" not "Xs".
+6. Mobile viewport: nav wraps, agents single column.
+
+- [ ] **Step 3: Final commit if needed**
+
+---
+
+## Self-Review
+
+**1. Spec coverage:**
+- ✅ Design tokens (Section 1) → Task 3
+- ✅ Dark mode (Section 2) → Tasks 1, 3, 4
+- ✅ Status indicators (Section 3) → Tasks 2, 4, 5
+- ✅ Human-readable time (Section 3) → Tasks 1, 5
+- ✅ Responsive (Section 4) → Task 3
+- ✅ Nav active-state (Section 5) → Task 3 (CSS)
+- ✅ Empty states (Section 5) → Task 3 (CSS) + Task 5
+
+**2. Placeholder scan:** No TBD/TODO. ✅
+
+**3. Type consistency:**
+- `sseConnectionState` consistent across Tasks 2, 4 ✅
+- `formatUptime` consistent across Tasks 1, 5 ✅
+- `useTheme().toggle` consistent across Tasks 1, 4 ✅

@@ -10,6 +10,7 @@ import type {
   ConfigResponse,
   EodEntrySummary,
   EodPublishResult,
+  EventLogEntry,
   HealthResponse,
   HitlStrategy,
   HitlSwitchResponse,
@@ -146,3 +147,9 @@ export const queueMoveUp = (taskId: string) =>
   postJson<QueueEntry[]>('/queue/move-up', { task_id: taskId })
 export const queueMoveDown = (taskId: string) =>
   postJson<QueueEntry[]>('/queue/move-down', { task_id: taskId })
+
+// --- Event history (P2) ---
+export const getEventHistory = (limit = 100, eventType?: string) =>
+  getJson<EventLogEntry[]>(
+    `/events/history?limit=${limit}${eventType ? `&event_type=${eventType}` : ''}`,
+  )

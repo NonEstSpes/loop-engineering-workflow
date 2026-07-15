@@ -71,8 +71,12 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     from devflow.batch.queue_store import QueueStore
     queue_store = QueueStore(str(Path(repo_path) / ".devflow" / "queue.db"))
 
+    # 3b. Event history store (persistent event log for Activity view).
+    from devflow.batch.event_store import EventStore
+    event_store = EventStore(str(Path(repo_path) / ".devflow" / "events.db"))
+
     # 3b. Create approval store + bridge for HITL strategies.
-    approval_store = ApprovalStore()
+    approval_store = ApprovalStore(event_bus=event_bus)
     # Build push channels specifically for approval notifications.
     # approval_push_channels is a separate list so enabling ntfy for
     # approvals doesn't also route all corporate reports to ntfy.
@@ -109,6 +113,7 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
         app_cfg, locks, event_bus, runner,
         approval_store=approval_store, eod_handler=eod_handler,
         scheduler=scheduler, queue_store=queue_store,
+        event_store=event_store,
     )
     app.state.config_dir = config_dir  # for /api/config/save + /api/config/diff
     runner._on_task_change = app.state.set_current_task  # type: ignore[attr-defined]
@@ -139,6 +144,7 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
         scheduler.shutdown()
         batch_store.close()
         queue_store.close()
+        event_store.close()
         logger.info("Daemon stopped.")
 
 
