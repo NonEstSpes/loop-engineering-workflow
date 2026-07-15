@@ -16,6 +16,8 @@ useSSE()
         <RouterLink to="/approvals">Approvals</RouterLink>
         <span> · </span>
         <RouterLink to="/eod">EOD Review</RouterLink>
+        <span> · </span>
+        <RouterLink to="/controls">Controls</RouterLink>
       </nav>
     </header>
     <main>

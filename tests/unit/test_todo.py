@@ -283,11 +283,11 @@ class TestPriorityFromTask:
             ("Высокий", 2),
             ("Нормальный", 3),
             ("Низкий", 4),
-            ("Unknown", 5),
-            (None, 5),
+            ("Unknown", None),
+            (None, None),
         ],
     )
-    def test_mapping(self, name: str | None, expected: int) -> None:
+    def test_mapping(self, name: str | None, expected: int | None) -> None:
         assert priority_from_task(_task("1", "t", priority=name)) == expected
 
 
@@ -315,9 +315,27 @@ class TestGenerateTodoFromSource:
         assert items[0].url is None
         assert "#42" in items[0].raw_line
 
-    def test_unknown_priority_is_r5(self) -> None:
+    def test_unknown_priority_is_none(self) -> None:
         items = generate_todo_from_source([_task("42", "Title", priority="???")])
-        assert items[0].priority == 5
+        assert items[0].priority is None
+
+    def test_none_priority_skips_tag(self) -> None:
+        """Tasks without a recognized priority get NO #rX tag in the line."""
+        items = generate_todo_from_source([_task("42", "Title", priority=None)])
+        assert items[0].priority is None
+        assert "#r" not in items[0].raw_line
+
+    def test_none_priority_sorts_last(self) -> None:
+        """None-priority tasks sort after all prioritized tasks."""
+        tasks = [
+            _task("3", "none", priority=None),  # None priority
+            _task("1", "urgent", priority="Немедленный"),  # r0
+            _task("2", "low", priority="Низкий"),  # r4
+        ]
+        items = generate_todo_from_source(tasks)
+        assert items[0].priority == 0
+        assert items[1].priority == 4
+        assert items[2].priority is None
 
 
 class TestRenderAndWrite:

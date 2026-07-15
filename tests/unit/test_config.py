@@ -187,3 +187,37 @@ def test_daemon_config_frontend_from_yaml(tmp_path: Path) -> None:
     cfg = load_workflow_config(yaml_path)
     assert cfg.daemon.cors_origins == ["http://localhost:5173"]
     assert cfg.daemon.frontend_dist == "build/spa"
+
+
+def test_workflow_config_default_todo_path_is_tasks_md() -> None:
+    """The default todo_path is now TASKS.md (renamed from TODO.md)."""
+    from devflow.config import WorkflowConfig
+    cfg = WorkflowConfig(task_source="mock")
+    assert cfg.todo_path == "TASKS.md"
+
+
+def test_migrate_todo_to_tasks_copies_when_tasks_missing(tmp_path: Path) -> None:
+    """If TASKS.md is missing but TODO.md exists, copy TODO.md → TASKS.md."""
+    from devflow.config import migrate_todo_to_tasks
+    (tmp_path / "TODO.md").write_text("# Old TODO\n- [ ] task\n", encoding="utf-8")
+    migrate_todo_to_tasks(tmp_path)
+    assert (tmp_path / "TASKS.md").exists()
+    assert "# Old TODO" in (tmp_path / "TASKS.md").read_text(encoding="utf-8")
+    # TODO.md is NOT deleted (kept as backup).
+    assert (tmp_path / "TODO.md").exists()
+
+
+def test_migrate_todo_to_tasks_noop_when_tasks_exists(tmp_path: Path) -> None:
+    """If TASKS.md already exists, do nothing (don't overwrite)."""
+    from devflow.config import migrate_todo_to_tasks
+    (tmp_path / "TASKS.md").write_text("# Existing TASKS\n", encoding="utf-8")
+    (tmp_path / "TODO.md").write_text("# Old TODO\n", encoding="utf-8")
+    migrate_todo_to_tasks(tmp_path)
+    assert "# Existing TASKS" in (tmp_path / "TASKS.md").read_text(encoding="utf-8")
+
+
+def test_migrate_todo_to_tasks_noop_when_neither_exists(tmp_path: Path) -> None:
+    """If neither file exists, do nothing (no error)."""
+    from devflow.config import migrate_todo_to_tasks
+    migrate_todo_to_tasks(tmp_path)  # must not raise
+    assert not (tmp_path / "TASKS.md").exists()

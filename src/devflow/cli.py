@@ -327,7 +327,7 @@ def list_tasks(
     todo: bool = typer.Option(
         False,
         "--todo",
-        help="Write the listed tasks to the TODO.md file (sorted by priority)",
+        help="Write the listed tasks to the TASKS.md file (sorted by priority)",
     ),
 ) -> None:
     """List tasks with their status, workflow progress, and any problems."""
@@ -363,20 +363,44 @@ def list_tasks(
         task_source.close()
 
 
-def _write_todo_file(app_cfg: Config, tasks: list[Task], quiet: bool) -> None:
-    """Generate/overwrite ``TODO.md`` from ``tasks`` sorted by priority."""
+def _write_todo_file(
+    app_cfg: Config,
+    tasks: list[Task],
+    quiet: bool,
+    event_bus: Any = None,
+) -> None:
+    """Generate/overwrite ``TASKS.md`` from ``tasks`` sorted by priority.
+
+    When ``event_bus`` is provided (daemon mode), publishes a ``tasks.updated``
+    SSE event so the dashboard can refresh the list live.
+    """
     from devflow.todo import generate_todo_from_source, write_todo
 
     path = Path(app_cfg.workflow.todo_path)
     items = generate_todo_from_source(tasks)
     header = (
-        "# TODO\n\n"
+        "# TASKS\n\n"
         "> Сгенерировано `devflow-super list-tasks --todo`.\n"
         "> Приоритеты: #r0 (высший) — #r5 (низший). Строки без #rX игнорируются."
     )
     write_todo(path, items, header=header)
     if not quiet:
         console.print(f"Wrote {len(items)} task(s) to {path}")
+    if event_bus is not None:
+        import asyncio
+        try:
+            asyncio.run(event_bus.publish("*", {"event": "tasks.updated", "path": str(path), "count": len(items)}))
+        except RuntimeError:
+            # Already inside a running loop (daemon context) — schedule in thread.
+            import threading
+            threading.Thread(
+                target=asyncio.run,
+                args=(event_bus.publish("*", {"event": "tasks.updated", "path": str(path), "count": len(items)}),),
+                daemon=True,
+            ).start()
+        logging.getLogger(__name__).info(
+            "Published tasks.updated (%d items)", len(items)
+        )
 
 
 def _task_row(task: Task, app_cfg: Config, task_source: TaskSource) -> dict[str, str]:
