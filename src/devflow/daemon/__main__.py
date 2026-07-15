@@ -88,19 +88,21 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
         app_cfg, event_bus, locks, approval_bridge=bridge, batch_store=batch_store
     )
 
+    # 4. Create and start scheduler, register jobs.
+    scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
+    scheduler.start()
+    scheduler.register_jobs(repo_path)
+
     # Build the app explicitly so we can wire the current-task callback.
     # The callback lets /api/health and /api/tasks/current reflect the task
     # the runner is actively working on (set on run start, cleared on end).
     app = create_app(
         app_cfg, locks, event_bus, runner,
         approval_store=approval_store, eod_handler=eod_handler,
+        scheduler=scheduler,
     )
+    app.state.config_dir = config_dir  # for /api/config/save + /api/config/diff
     runner._on_task_change = app.state.set_current_task  # type: ignore[attr-defined]
-
-    # 4. Create and start scheduler, register jobs.
-    scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
-    scheduler.start()
-    scheduler.register_jobs(repo_path)
 
     # 5. Graceful shutdown handler.
     # Uvicorn installs its own SIGINT/SIGTERM handlers that shadow these,

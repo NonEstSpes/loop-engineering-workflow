@@ -102,3 +102,105 @@ export interface SseEvent {
   event: string
   [key: string]: unknown
 }
+
+// --- Control endpoints (P3) ---
+
+export interface RunRequest {
+  task_id?: string
+  repo_path?: string
+}
+
+export interface RunResponse {
+  run_id: string
+  task_id: string | null
+  status: string
+}
+
+export interface TodoItem {
+  line_no: number
+  text: string
+  checkbox: string | null
+  priority: number | null
+  task_ref: string | null
+  url: string | null
+  title: string
+}
+
+export interface TodoPatch {
+  priority?: number
+  status?: 'open' | 'in_progress' | 'done'
+}
+
+export interface ConfigResponse {
+  task_source: string
+  hitl_strategy: string
+  todo_path: string
+  human_in_the_loop: boolean
+  daemon: {
+    enabled: boolean
+    task_schedule: string
+    eod_schedule: string
+    port: number
+    approval_timeout_hours: number
+    approval_on_timeout: string
+    serve_frontend: boolean
+    frontend_dist: string
+  }
+  forge: {
+    provider: string
+    target_branch: string
+    actions: string[]
+  }
+}
+
+export interface ConfigPatch {
+  hitl_strategy?: string
+  daemon?: {
+    task_schedule?: string
+    eod_schedule?: string
+    approval_timeout_hours?: number
+    approval_on_timeout?: string
+  }
+}
+
+export interface ConfigDiffEntry {
+  field: string
+  in_memory: unknown
+  on_disk: unknown
+}
+
+export interface ConfigDiff {
+  changed: ConfigDiffEntry[]
+  clean: boolean
+  note?: string
+}
+
+export type HitlStrategy = 'per_plan' | 'full_detail' | 'end_of_day'
+
+export interface HitlSwitchResponse {
+  strategy: string
+  previous: string
+}
+
+export interface AgentSummary {
+  name: string
+  provider: string
+  model: string
+  temperature: number
+  has_prompt: boolean
+}
+
+export interface AgentDetail {
+  name: string
+  provider: string
+  model: string
+  temperature: number
+  system_prompt: string
+  skills: string[]
+  tools: string[]
+  auto_approve: boolean
+}
+
+export interface AgentPromptUpdate {
+  system_prompt: string
+}

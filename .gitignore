@@ -25,3 +25,7 @@ __pycache__/
 # Daemon runtime artifacts
 .devflow/
 logs/
+
+# Playwright MCP screenshots/snapshots (smoke-test artifacts)
+.playwright-mcp/
+dashboard-*.png

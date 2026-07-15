@@ -1,13 +1,24 @@
 import type {
+  AgentDetail,
+  AgentSummary,
   ApprovalDecision,
   ApprovalPending,
   BatchEntryDetail,
+  ConfigDiff,
+  ConfigPatch,
+  ConfigResponse,
   EodEntrySummary,
   EodPublishResult,
   HealthResponse,
+  HitlStrategy,
+  HitlSwitchResponse,
+  RunRequest,
+  RunResponse,
   StateResponse,
   TaskCurrentResponse,
   TaskQueueResponse,
+  TodoItem,
+  TodoPatch,
 } from './types'
 
 const BASE = import.meta.env.BASE_URL || '/'
@@ -30,6 +41,30 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   })
   if (!resp.ok) {
     throw new Error(`POST ${path} failed: ${resp.status} ${resp.statusText}`)
+  }
+  return resp.json() as Promise<T>
+}
+
+async function patchJson<T>(path: string, body?: unknown): Promise<T> {
+  const resp = await fetch(`${BASE}api${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    throw new Error(`PATCH ${path} failed: ${resp.status} ${resp.statusText}`)
+  }
+  return resp.json() as Promise<T>
+}
+
+async function putJson<T>(path: string, body?: unknown): Promise<T> {
+  const resp = await fetch(`${BASE}api${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    throw new Error(`PUT ${path} failed: ${resp.status} ${resp.statusText}`)
   }
   return resp.json() as Promise<T>
 }
@@ -60,3 +95,33 @@ export const eodPublish = (taskIds: string[]) =>
   postJson<EodPublishResult>('/eod/publish', { task_ids: taskIds })
 export const getEodEntry = (entryId: number) =>
   getJson<BatchEntryDetail>(`/eod/entries/${entryId}`)
+
+// --- Control: run tasks ---
+export const runTask = (req: RunRequest) =>
+  postJson<RunResponse>('/tasks/run', req)
+
+// --- Control: TODO ---
+export const getTodo = () => getJson<TodoItem[]>('/todo')
+export const patchTodo = (lineNo: number, patch: TodoPatch) =>
+  patchJson<TodoItem>(`/todo/${lineNo}`, patch)
+
+// --- Control: config ---
+export const getConfig = () => getJson<ConfigResponse>('/config')
+export const patchConfig = (patch: ConfigPatch) =>
+  patchJson<ConfigResponse>('/config', patch)
+export const getConfigDiff = () => getJson<ConfigDiff>('/config/diff')
+export const saveConfig = () => postJson<{ path: string }>('/config/save')
+export const switchHitl = (strategy: HitlStrategy) =>
+  putJson<HitlSwitchResponse>('/config/hitl', { strategy })
+
+// --- Control: agents ---
+export const getAgents = () => getJson<AgentSummary[]>('/agents')
+export const getAgent = (name: string) =>
+  getJson<AgentDetail>(`/agents/${encodeURIComponent(name)}`)
+export const updateAgentPrompt = (name: string, prompt: string) =>
+  putJson<{ name: string; status: string }>(
+    `/agents/${encodeURIComponent(name)}/prompt`,
+    { system_prompt: prompt },
+  )
+export const saveAgent = (name: string) =>
+  postJson<{ path: string }>(`/agents/${encodeURIComponent(name)}/save`)
