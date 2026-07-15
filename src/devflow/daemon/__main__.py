@@ -43,6 +43,10 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     app_cfg = load_config(config_dir)
     daemon_cfg = app_cfg.workflow.daemon
 
+    # 1a. One-time migration: copy TODO.md → TASKS.md if needed.
+    from devflow.config import migrate_todo_to_tasks
+    migrate_todo_to_tasks(Path(repo_path))
+
     if not daemon_cfg.enabled:
         logger.error("Daemon is not enabled in config (daemon.enabled=false). Exiting.")
         sys.exit(1)
@@ -62,6 +66,10 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     # end_of_day mode).
     batch_store = BatchStore(str(Path(repo_path) / ".devflow" / "batch_store.db"))
     eod_handler = EodHandler(app_cfg, batch_store, event_bus, repo_path=repo_path)
+
+    # 3a-bis. Execution queue store (LLM-evaluated task order).
+    from devflow.batch.queue_store import QueueStore
+    queue_store = QueueStore(str(Path(repo_path) / ".devflow" / "queue.db"))
 
     # 3b. Create approval store + bridge for HITL strategies.
     approval_store = ApprovalStore()
@@ -85,8 +93,14 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     # Construct the runner once, with the bridge attached so run_task uses
     # run_workflow_interactive (pausing on plan/publish approval interrupts).
     runner = WorkflowRunner(
-        app_cfg, event_bus, locks, approval_bridge=bridge, batch_store=batch_store
+        app_cfg, event_bus, locks, approval_bridge=bridge, batch_store=batch_store,
+        queue_store=queue_store,
     )
+
+    # 4. Create and start scheduler, register jobs.
+    scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
+    scheduler.start()
+    scheduler.register_jobs(repo_path)
 
     # Build the app explicitly so we can wire the current-task callback.
     # The callback lets /api/health and /api/tasks/current reflect the task
@@ -94,13 +108,10 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
     app = create_app(
         app_cfg, locks, event_bus, runner,
         approval_store=approval_store, eod_handler=eod_handler,
+        scheduler=scheduler, queue_store=queue_store,
     )
+    app.state.config_dir = config_dir  # for /api/config/save + /api/config/diff
     runner._on_task_change = app.state.set_current_task  # type: ignore[attr-defined]
-
-    # 4. Create and start scheduler, register jobs.
-    scheduler = DaemonScheduler(app_cfg, runner, eod_handler=eod_handler)
-    scheduler.start()
-    scheduler.register_jobs(repo_path)
 
     # 5. Graceful shutdown handler.
     # Uvicorn installs its own SIGINT/SIGTERM handlers that shadow these,
@@ -127,6 +138,7 @@ def run_daemon(config_dir: str = "config", repo_path: str = ".") -> None:
         logger.info("Web server stopped; shutting down scheduler...")
         scheduler.shutdown()
         batch_store.close()
+        queue_store.close()
         logger.info("Daemon stopped.")
 
 

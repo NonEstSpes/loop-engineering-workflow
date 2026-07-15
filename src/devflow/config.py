@@ -53,10 +53,10 @@ class WorkflowConfig(BaseModel):
     # push channel) for HITL approvals does NOT also route all corporate
     # reports to that channel. Empty by default (no push notifications).
     approval_push_channels: list[str] = Field(default_factory=list)
-    # Path to the TODO.md file that the orchestrator reads task entries from
+    # Path to the TASKS.md file that the orchestrator reads task entries from
     # and the reporter writes completion results back to. May be overridden by
     # the --todo-path CLI flag or the DEVFLOW_TODO_PATH env variable.
-    todo_path: str = "TODO.md"
+    todo_path: str = "TASKS.md"
     # Human-in-the-loop cadence for the daemon: per_plan (each plan), full_detail
     # (each step), or end_of_day (batch at EOD). See HitlStrategy for valid values.
     # May be overridden by the DEVFLOW_HITL_STRATEGY env variable.
@@ -233,6 +233,23 @@ def load_workflow_config(path: Path) -> WorkflowConfig:
         return WorkflowConfig.model_validate(raw)
     except ValidationError as exc:
         raise ValueError(f"Invalid workflow config: {path}") from exc
+
+
+def migrate_todo_to_tasks(base_dir: Path) -> None:
+    """One-time migration: if TASKS.md is missing but TODO.md exists, copy it.
+
+    The old TODO.md is NOT deleted (kept as a backup). Called once during
+    daemon/CLI startup so existing users keep their task list. ``base_dir``
+    is the repository root (or CWD) where TASKS.md / TODO.md live.
+    """
+    import logging
+    tasks_path = base_dir / "TASKS.md"
+    todo_path = base_dir / "TODO.md"
+    if not tasks_path.exists() and todo_path.exists():
+        tasks_path.write_text(todo_path.read_text(encoding="utf-8"), encoding="utf-8")
+        logging.getLogger(__name__).info(
+            "Migrated TODO.md → TASKS.md (old file kept as backup)."
+        )
 
 
 def load_research_sources(path: Path) -> ResearchSourcesConfig:

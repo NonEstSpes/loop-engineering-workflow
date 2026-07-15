@@ -316,10 +316,14 @@ def mark_done(
 # ---------------------------------------------------------------------------
 
 
-def priority_from_task(task: Task) -> int:
-    """Map a task's Redmine priority (in ``metadata``) to an r-level (0..5)."""
+def priority_from_task(task: Task) -> int | None:
+    """Map a task's Redmine priority (in ``metadata``) to an r-level (0..5).
+
+    Returns ``None`` when the task has no priority or an unrecognized one,
+    so :func:`generate_todo_from_source` can emit a line without a ``#rX`` tag.
+    """
     raw = str(task.metadata.get("priority") or "").strip().lower()
-    return _PRIORITY_MAP.get(raw, 5)
+    return _PRIORITY_MAP.get(raw)
 
 
 def generate_todo_from_source(tasks: Iterable[Task]) -> list[TodoItem]:
@@ -331,17 +335,20 @@ def generate_todo_from_source(tasks: Iterable[Task]) -> list[TodoItem]:
     """
     sortable = sorted(
         tasks,
-        key=lambda t: (priority_from_task(t), str(t.id)),
+        # None-priority tasks sort last (99 sentinel), then by id.
+        key=lambda t: (priority_from_task(t) if priority_from_task(t) is not None else 99, str(t.id)),
     )
     items: list[TodoItem] = []
     for task in sortable:
         r = priority_from_task(task)
         url = task.metadata.get("redmine_url")
         task_ref = str(task.id)
+        # Only add a #rX tag when a priority is known.
+        tag = f"#r{r} " if r is not None else ""
         if url:
-            body = f"- {CHECKBOX_OPEN} #r{r} [#{task_ref}]({url}) — {task.title}"
+            body = f"- {CHECKBOX_OPEN} {tag}[#{task_ref}]({url}) — {task.title}"
         else:
-            body = f"- {CHECKBOX_OPEN} #r{r} #{task_ref} — {task.title}"
+            body = f"- {CHECKBOX_OPEN} {tag}#{task_ref} — {task.title}"
         items.append(
             TodoItem(
                 raw_line=body,

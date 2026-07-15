@@ -46,6 +46,7 @@ class WorkflowRunner:
         task_source: TaskSource | None = None,
         approval_bridge: ApprovalBridge | None = None,
         batch_store: BatchStore | None = None,
+        queue_store: Any | None = None,
         on_task_change: Callable[[str | None], None] | None = None,
     ) -> None:
         self._cfg = app_cfg
@@ -54,6 +55,7 @@ class WorkflowRunner:
         self._task_source = task_source
         self._bridge = approval_bridge
         self._batch_store = batch_store
+        self._queue_store = queue_store
         self._on_task_change = on_task_change
         self.events_published: int = 0
 
@@ -106,6 +108,7 @@ class WorkflowRunner:
                     task_source=self._task_source,
                     thread_id=thread_id or task_id,
                     approval_callback=callback,
+                    queue_store=self._queue_store,
                 )
             else:
                 final_state = run_workflow(
@@ -114,6 +117,7 @@ class WorkflowRunner:
                     task_id=task_id,
                     task_source=self._task_source,
                     thread_id=thread_id or task_id,
+                    queue_store=self._queue_store,
                 )
             verdict = final_state.get("final_verdict")
             self._publish(

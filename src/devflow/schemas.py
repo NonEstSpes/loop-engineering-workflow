@@ -103,3 +103,18 @@ class MakerResponse(BaseModel):
     operations: list[FileOperation] = Field(default_factory=list)
     test_commands: list[list[str]] = Field(default_factory=list)
     research_request: ResearchRequest | None = None
+
+
+
+class PrioritizedTask(BaseModel):
+    """A single task in the LLM-evaluated execution order."""
+
+    task_id: str
+    reason: str = ""
+
+
+class PrioritizationResult(BaseModel):
+    """LLM output: ordered list of task IDs with justifications."""
+
+    ordered_tasks: list[PrioritizedTask]
+    notes: str = ""

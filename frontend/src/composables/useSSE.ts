@@ -2,6 +2,9 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { useDaemonStore } from '@/stores/daemon'
 import { useTasksStore } from '@/stores/tasks'
 import { useEodStore } from '@/stores/eod'
+import { useControlsStore } from '@/stores/controls'
+import { useTodoStore } from '@/stores/todo'
+import { useQueueStore } from '@/stores/queue'
 
 /**
  * Connect to /api/events SSE stream and refresh relevant stores on events.
@@ -11,6 +14,9 @@ export function useSSE() {
   const daemon = useDaemonStore()
   const tasks = useTasksStore()
   const eod = useEodStore()
+  const controls = useControlsStore()
+  const todo = useTodoStore()
+  const queue = useQueueStore()
 
   let source: EventSource | null = null
   let reconnectTimer: number | null = null
@@ -24,13 +30,21 @@ export function useSSE() {
     source.addEventListener('task.finished', () => {
       void tasks.fetchCurrent()
       void tasks.fetchDone()
+      controls.markFinished('', 'finished')
     })
     source.addEventListener('task.error', () => {
       void tasks.fetchCurrent()
       void daemon.fetchAll()
+      controls.markFinished('', 'error')
     })
     source.addEventListener('eod.ready', () => {
       void eod.fetch()
+    })
+    source.addEventListener('tasks.updated', () => {
+      void todo.fetch()
+    })
+    source.addEventListener('queue.updated', () => {
+      void queue.fetch()
     })
     // NOTE: 'approval.waiting' is not yet emitted by the backend (ApprovalBridge
     // does not publish to EventBus on register). Approvals are poll-only

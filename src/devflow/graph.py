@@ -20,6 +20,7 @@ from devflow.mcp.factory import build_task_source
 from devflow.nodes.checker import aggregate_checker_node, run_checker_node
 from devflow.nodes.maker import maker_node
 from devflow.nodes.orchestrator import orchestrator_node
+from devflow.nodes.prioritizer import prioritizer_node
 from devflow.nodes.plan_approval import plan_approval_node
 from devflow.nodes.planner import planner_node
 from devflow.nodes.publish_approval import publish_approval_node
@@ -40,6 +41,7 @@ def build_graph(
     task_source: TaskSource | None = None,
     task_id: str | None = None,
     checkpointer: Any | None = None,
+    queue_store: Any | None = None,
 ) -> CompiledStateGraph:
     """Build and compile the development workflow state graph."""
     if task_source is None:
@@ -51,6 +53,19 @@ def build_graph(
     base_branch = app_cfg.workflow.default_branch
 
     graph = StateGraph(WorkflowState)
+
+    # Prioritizer node — LLM-evaluates TASKS.md and writes the execution queue.
+    # Only added when a queue_store is provided (daemon mode).
+    if queue_store is not None:
+        graph.add_node(
+            "prioritizer",
+            partial(
+                prioritizer_node,
+                app_cfg=app_cfg,
+                repo_path=repo_path or ".",
+                queue_store=queue_store,
+            ),
+        )
 
     graph.add_node(
         "orchestrator",
@@ -108,7 +123,13 @@ def build_graph(
         partial(research_node, app_cfg=app_cfg),
     )
 
-    graph.add_edge(START, "orchestrator")
+    # Entry edge: prioritizer → orchestrator (when queue_store provided),
+    # otherwise START → orchestrator directly.
+    if queue_store is not None:
+        graph.add_edge(START, "prioritizer")
+        graph.add_edge("prioritizer", "orchestrator")
+    else:
+        graph.add_edge(START, "orchestrator")
     # Short-circuit to the reporter on orchestrator errors (no actionable
     # task, TODO read failure, hydration failure) so we do not waste a
     # planner LLM call on a stale/empty state.
@@ -258,6 +279,7 @@ def run_workflow(
     task_source: TaskSource | None = None,
     initial_state: WorkflowState | None = None,
     thread_id: str | None = None,
+    queue_store: Any | None = None,
 ) -> WorkflowState:
     """Build the graph and run it to completion."""
     graph = build_graph(
@@ -265,6 +287,7 @@ def run_workflow(
         repo_path=repo_path,
         task_source=task_source,
         task_id=task_id,
+        queue_store=queue_store,
     )
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},
@@ -291,6 +314,7 @@ def run_workflow_interactive(
     approval_callback: ApprovalCallback | None = None,
     *,
     max_resumptions: int = 50,
+    queue_store: Any | None = None,
 ) -> WorkflowState:
     """Run the workflow, resuming from ``interrupt()`` pauses via a callback.
 
@@ -313,6 +337,7 @@ def run_workflow_interactive(
         repo_path=repo_path,
         task_source=task_source,
         task_id=task_id,
+        queue_store=queue_store,
     )
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id or str(uuid.uuid4())},

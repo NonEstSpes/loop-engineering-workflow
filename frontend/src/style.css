@@ -113,3 +113,134 @@ summary {
   cursor: pointer;
   color: #0366d6;
 }
+
+/* --- Controls: tabs --- */
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 1rem;
+}
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  border-radius: 0;
+  padding: 0.5rem 1rem;
+  margin-right: 0;
+}
+.tabs button.active {
+  border-bottom-color: #0366d6;
+  color: #0366d6;
+  font-weight: 600;
+}
+/* --- Controls: badges --- */
+.running-badge { color: #0366d6; }
+.idle-badge { color: #28a745; }
+.unsaved-badge { color: #d97706; font-weight: 600; }
+.modified-dot { color: #d97706; }
+/* --- Controls: TODO priorities --- */
+.prio-critical { color: #cb2431; font-weight: 600; }
+.prio-urgent { color: #d97706; }
+.prio-normal { color: #666; }
+.checkbox-btn { border: 1px solid #ccc; padding: 0.1rem 0.4rem; margin-right: 0; }
+/* --- Controls: agents layout --- */
+.agents-layout { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; }
+.agent-list { list-style: none; padding: 0; margin: 0; }
+.agent-list li { padding: 0.3rem 0; }
+.agent-list li.active button { font-weight: 600; color: #0366d6; }
+.agent-list li.modified button::after { content: " ●"; color: #d97706; }
+.agent-editor textarea.prompt-textarea {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.85em;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  resize: vertical;
+}
+/* --- status colors --- */
+.finished { color: #28a745; }
+.error { color: #cb2431; }
+.started { color: #0366d6; }
+
+/* --- Cron builder --- */
+.cron-builder {
+  margin-bottom: 1rem;
+}
+.cron-builder fieldset {
+  border: 1px solid #e1e1e3;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+}
+.cron-builder legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+}
+.cron-builder label {
+  display: inline-block;
+  margin-right: 1rem;
+}
+.day-checkboxes, .every-n, .time-entry {
+  margin-top: 0.3rem;
+  padding-left: 1.5rem;
+}
+.time-entry {
+  margin-bottom: 0.3rem;
+}
+.add-time, .remove-time, .help-toggle {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.5rem;
+}
+.cron-preview {
+  background: #f7f7f8;
+  padding: 0.5rem;
+  border-radius: 4px;
+  margin-top: 0.5rem;
+}
+.cron-help {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  background: #f7f7f8;
+  padding: 0.5rem;
+  border-radius: 4px;
+}
+
+/* --- Tasks refresh --- */
+.tasks-header { display: flex; justify-content: space-between; align-items: center; }
+.refresh-section { text-align: right; }
+.refresh-btn { font-size: 0.9rem; }
+.last-updated { display: block; color: #999; font-size: 0.75rem; }
+.prio-none { color: #ccc; }
+
+/* --- Execution queue --- */
+.queue-panel { margin-top: 1.5rem; }
+.queue-list { list-style: none; padding: 0; margin: 0; }
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #e1e1e3;
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+  background: #fff;
+  cursor: grab;
+}
+.queue-item.drag-over {
+  border-color: #0366d6;
+  background: #f0f7ff;
+}
+.queue-item:active { cursor: grabbing; }
+.drag-handle { color: #999; font-size: 1.2rem; cursor: grab; }
+.queue-position { font-weight: 600; min-width: 1.5rem; }
+.queue-title { flex: 1; }
+.queue-actions { display: flex; gap: 0.2rem; }
+.move-btn {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.9rem;
+  margin-right: 0;
+}
+.dnd-hint { display: block; color: #999; font-size: 0.75rem; margin-top: 0.5rem; }

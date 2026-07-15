@@ -108,6 +108,63 @@ class DaemonScheduler:
 
             self._jobs_registered = True
 
+    def reschedule(
+        self,
+        task_schedule: str | None = None,
+        eod_schedule: str | None = None,
+    ) -> None:
+        """Reschedule cron jobs to new schedules.
+
+        Validates each cron string via :class:`CronTrigger.from_crontab`
+        (raises ``ValueError`` on invalid syntax). Only re-registers jobs
+        that currently exist; safe to call before ``register_jobs``.
+        """
+        with self._lock:
+            if task_schedule is not None:
+                trigger = CronTrigger.from_crontab(task_schedule)  # raises ValueError
+                if self._scheduler.get_job("task_run") is not None:
+                    self._scheduler.reschedule_job(
+                        "task_run", trigger=trigger
+                    )
+                self._cfg.workflow.daemon.task_schedule = task_schedule
+                logger.info("Rescheduled task_run to: %s", task_schedule)
+
+            if eod_schedule is not None:
+                trigger = CronTrigger.from_crontab(eod_schedule)  # raises ValueError
+                if self._scheduler.get_job("eod_review") is not None:
+                    self._scheduler.reschedule_job(
+                        "eod_review", trigger=trigger
+                    )
+                self._cfg.workflow.daemon.eod_schedule = eod_schedule
+                logger.info("Rescheduled eod_review to: %s", eod_schedule)
+
+    def set_eod_job(self, enabled: bool, repo_path: str = ".") -> None:
+        """Enable or disable the EOD review cron job at runtime.
+
+        Called when HITL strategy is switched to/from ``end_of_day`` so the
+        EOD job matches the current strategy without a daemon restart.
+        """
+        with self._lock:
+            if enabled:
+                if self._scheduler.get_job("eod_review") is None:
+                    eod_trigger = CronTrigger.from_crontab(
+                        self._cfg.workflow.daemon.eod_schedule
+                    )
+                    self._scheduler.add_job(
+                        self._run_eod_wrapper,
+                        trigger=eod_trigger,
+                        id="eod_review",
+                        max_instances=1,
+                        coalesce=True,
+                        kwargs={"repo_path": repo_path},
+                        replace_existing=True,
+                    )
+                    logger.info("Enabled eod_review job")
+            else:
+                if self._scheduler.get_job("eod_review") is not None:
+                    self._scheduler.remove_job("eod_review")
+                    logger.info("Disabled eod_review job")
+
     def _run_all_wrapper(self, repo_path: str) -> None:
         """Job handler: run all open tasks. Catches exceptions so APScheduler
         doesn't kill the scheduler on a single failure."""
