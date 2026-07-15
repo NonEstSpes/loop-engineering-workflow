@@ -244,3 +244,17 @@ summary {
   margin-right: 0;
 }
 .dnd-hint { display: block; color: #999; font-size: 0.75rem; margin-top: 0.5rem; }
+
+/* --- Dashboard: run button (primary action) --- */
+.run-btn {
+  margin-top: 0.5rem;
+  margin-right: 0;
+  border-color: #0366d6;
+  background: #0366d6;
+  color: #fff;
+  font-weight: 600;
+}
+.run-btn:hover:not(:disabled) {
+  background: #0255a8;
+  border-color: #0255a8;
+}
